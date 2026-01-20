@@ -1,30 +1,32 @@
-import { useState } from 'react'
+import React from 'react'
+import NavBar from './Components/NavBar'
+import Home from './Pages/Home'
+import { Route, createBrowserRouter, createRoutesFromElements, Outlet, RouterProvider } from 'react-router-dom'
+import Login from './Pages/Login'
+import Dashboard from './Pages/Dashboard'
+import AddStock from './Pages/AddStock'
+import Report from './Pages/Report'
+import RecordProduction from './Pages/RecordProduction'
+import Rootlayout from './Layout/Rootlayout'
 
-function App() {
-  const [count, setCount] = useState(0)
+
+const App = () => {
+  
+  const  router = createBrowserRouter(
+    createRoutesFromElements(
+      <Route path ='/' element ={<Rootlayout />}>
+        <Route index element={<Home />} />
+        <Route path='login' element={<Login />} />
+        <Route path='dashboard' element={<Dashboard />} />
+        <Route path='addstock' element={<AddStock />} />
+        <Route path='recordproduction' element={<RecordProduction />} />
+        <Route path='report' element={<Report />} />
+      </Route>
+    )
+  )
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
-        <h1 className="text-3xl font-bold text-center text-gray-800 mb-8">
-          Welcome to React + TailwindCSS
-        </h1>
-        
-        <div className="text-center">
-          <button
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors duration-200"
-            onClick={() => setCount((count) => count + 1)}
-          >
-            Count is {count}
-          </button>
-        </div>
-        
-        <div className="mt-8 text-sm text-gray-600 text-center">
-          <p>Click the button to test React state management</p>
-          <p className="mt-2">Styled with TailwindCSS utilities</p>
-        </div>
-      </div>
-    </div>
+   <RouterProvider router={router} />
   )
 }
 
