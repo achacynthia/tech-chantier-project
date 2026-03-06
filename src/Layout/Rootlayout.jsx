@@ -4,13 +4,11 @@ import { Outlet } from 'react-router-dom'
 
 const Rootlayout = () => {
   return (
-    <div>
+    <div className='app-shell'>
       <NavBar />
       <div className='container'>
         <Outlet />
       </div>
-      
-      
     </div>
   )
 }
