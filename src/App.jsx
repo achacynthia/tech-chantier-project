@@ -11,10 +11,9 @@ import ProtectedRoute from './Components/ProtectedRoute'
 
 
 const App = () => {
-  
-  const  router = createBrowserRouter(
+  const router = createBrowserRouter(
     createRoutesFromElements(
-      <Route path ='/' element ={<Rootlayout />}>
+      <Route path='/' element={<Rootlayout />}>
         <Route index element={<Home />} />
         <Route path='login' element={<Login />} />
         <Route
@@ -53,9 +52,7 @@ const App = () => {
     )
   )
 
-  return (
-   <RouterProvider router={router} />
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App

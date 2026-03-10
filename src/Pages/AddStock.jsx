@@ -1,15 +1,17 @@
 import React, { useMemo, useState } from 'react'
 import { useAppContext } from '../context/AppContext'
 
+const emptyMaterialForm = {
+  name: '',
+  quantity: '',
+  unit: '',
+  lowStockThreshold: '',
+}
+
 const AddStock = () => {
   const { materials, products, addMaterial, updateMaterial, deleteMaterial, configureProduct, deleteProduct } = useAppContext()
 
-  const [materialForm, setMaterialForm] = useState({
-    name: '',
-    quantity: '',
-    unit: 'kg',
-    lowStockThreshold: 10,
-  })
+  const [materialForm, setMaterialForm] = useState(emptyMaterialForm)
   const [editingMaterialId, setEditingMaterialId] = useState(null)
   const [editingProductId, setEditingProductId] = useState(null)
   const [productName, setProductName] = useState('')
@@ -35,12 +37,7 @@ const AddStock = () => {
 
     if (result.ok) {
       setEditingMaterialId(null)
-      setMaterialForm({
-        name: '',
-        quantity: '',
-        unit: materialForm.unit,
-        lowStockThreshold: materialForm.lowStockThreshold,
-      })
+      setMaterialForm(emptyMaterialForm)
     }
   }
 
@@ -58,12 +55,7 @@ const AddStock = () => {
   const removeMaterial = async (materialId) => {
     if (editingMaterialId === materialId) {
       setEditingMaterialId(null)
-      setMaterialForm({
-        name: '',
-        quantity: '',
-        unit: 'kg',
-        lowStockThreshold: 10,
-      })
+      setMaterialForm(emptyMaterialForm)
     }
 
     const result = await deleteMaterial(materialId)
@@ -72,12 +64,7 @@ const AddStock = () => {
 
   const cancelMaterialEdit = () => {
     setEditingMaterialId(null)
-    setMaterialForm({
-      name: '',
-      quantity: '',
-      unit: 'kg',
-      lowStockThreshold: 10,
-    })
+    setMaterialForm(emptyMaterialForm)
     setMaterialMessage('')
   }
 
@@ -154,7 +141,7 @@ const AddStock = () => {
             type="text"
             value={materialForm.name}
             onChange={handleMaterialChange}
-            placeholder="Flour"
+            placeholder="e.g. Flour"
           />
 
           <label htmlFor="quantity">Quantity</label>
@@ -166,7 +153,7 @@ const AddStock = () => {
             step="0.01"
             value={materialForm.quantity}
             onChange={handleMaterialChange}
-            placeholder="50"
+            placeholder="e.g. 50"
           />
 
           <label htmlFor="unit">Unit</label>
@@ -176,7 +163,7 @@ const AddStock = () => {
             type="text"
             value={materialForm.unit}
             onChange={handleMaterialChange}
-            placeholder="kg"
+            placeholder="e.g. kg"
           />
 
           <label htmlFor="lowStockThreshold">Low Stock Threshold</label>
@@ -188,6 +175,7 @@ const AddStock = () => {
             step="0.01"
             value={materialForm.lowStockThreshold}
             onChange={handleMaterialChange}
+            placeholder="e.g. 10"
           />
 
           {materialMessage && <p className="info-text">{materialMessage}</p>}

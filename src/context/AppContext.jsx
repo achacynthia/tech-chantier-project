@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient'
 
-const AppContext = createContext(null)
+const AppContext = createContext(null)  // Create the context with a default value of null
 
 const LOW_STOCK_THRESHOLD = 10
 
@@ -48,6 +48,7 @@ export const AppProvider = ({ children }) => {
   const [productionLogs, setProductionLogs] = useState([])
   const [finishedGoods, setFinishedGoods] = useState([])
   const [isBootstrapping, setIsBootstrapping] = useState(true)
+  const [localUsers, setLocalUsers] = useState([])
 
   useEffect(() => {
     const fetchAllData = async () => {
@@ -163,55 +164,160 @@ export const AppProvider = ({ children }) => {
     fetchAllData()
   }, [])
 
-  const login = async ({ name, email }) => {
-    const normalizedName = name?.trim()
+  const signup = async ({ firstName, lastName, email, password, country, confirmPassword }) => {
+    const normalizedFirstName = firstName?.trim()
+    const normalizedLastName = lastName?.trim()
     const normalizedEmail = email?.trim().toLowerCase()
+    const normalizedPassword = password?.trim()
+    const normalizedConfirmPassword = (confirmPassword ?? password)?.trim()
+    const normalizedCountry = country?.trim()
+    const fullName = `${normalizedFirstName || ''} ${normalizedLastName || ''}`.trim()
 
-    if (!normalizedName || !normalizedEmail) {
-      return { ok: false, message: 'Please enter both name and email.' }
+    if (
+      !normalizedFirstName ||
+      !normalizedLastName ||
+      !normalizedEmail ||
+      !normalizedPassword ||
+      !normalizedCountry
+    ) {
+      return {
+        ok: false,
+        message: 'Please complete first name, last name, email, password, and country.',
+      }
+    }
+
+    if (normalizedPassword.length < 6) {
+      return { ok: false, message: 'Password must be at least 6 characters.' }
+    }
+
+    if (normalizedPassword !== normalizedConfirmPassword) {
+      return { ok: false, message: 'Passwords do not match.' }
     }
 
     if (!isSupabaseConfigured) {
-      setCurrentUser({ id: Date.now(), name: normalizedName, email: normalizedEmail })
-      setIsAuthenticated(true)
-      return { ok: true, message: `Welcome, ${normalizedName}.` }
-    }
+      const existingLocalUser = localUsers.find(
+        (user) => user.name.toLowerCase() === fullName.toLowerCase()
+      )
 
-    const { data: existingUser, error: lookupError } = await supabase
-      .from('app_users')
-      .select('id, name, email')
-      .eq('name', normalizedName)
-      .eq('email', normalizedEmail)
-      .maybeSingle()
-
-    if (lookupError) {
-      return { ok: false, message: 'Unable to login right now. Please try again.' }
-    }
-
-    let userRecord = existingUser
-
-    if (!userRecord) {
-      const { data: insertedUser, error: insertError } = await supabase
-        .from('app_users')
-        .insert([{ name: normalizedName, email: normalizedEmail }])
-        .select('id, name, email')
-        .single()
-
-      if (insertError) {
-        return { ok: false, message: 'Unable to create user profile for login.' }
+      if (existingLocalUser) {
+        return { ok: false, message: 'This name is already registered. Please login instead.' }
       }
 
-      userRecord = insertedUser
+      setLocalUsers((prevUsers) => [
+        ...prevUsers,
+        {
+          id: Date.now(),
+          firstName: normalizedFirstName,
+          lastName: normalizedLastName,
+          name: fullName,
+          email: normalizedEmail,
+          country: normalizedCountry,
+          password: normalizedPassword,
+        },
+      ])
+
+      return { ok: true, message: 'Sign up successful. Please login with your name and password.' }
+    }
+
+    const { data: existingUsers, error: lookupError } = await supabase
+      .from('app_users')
+      .select('id, name')
+      .eq('name', fullName)
+      .limit(1)
+
+    if (lookupError) {
+      return { ok: false, message: 'Unable to sign up right now. Please try again.' }
+    }
+
+    if (existingUsers?.length) {
+      return { ok: false, message: 'This name is already registered. Please login instead.' }
+    }
+
+    const { error: insertError } = await supabase
+      .from('app_users')
+      .insert([
+        {
+          first_name: normalizedFirstName,
+          last_name: normalizedLastName,
+          name: fullName,
+          email: normalizedEmail,
+          country: normalizedCountry,
+          password: normalizedPassword,
+        },
+      ])
+
+    if (insertError) {
+      return {
+        ok: false,
+        message:
+          'Sign up needs the updated app_users schema (first_name, last_name, country, password columns).',
+      }
+    }
+
+    return { ok: true, message: 'Sign up successful. Please login with your name and password.' }
+  }
+
+  const login = async ({ name, password }) => {
+    const normalizedName = name?.trim()
+    const normalizedPassword = password?.trim()
+
+    if (!normalizedName || !normalizedPassword) {
+      return { ok: false, message: 'Please enter both name and password.' }
+    }
+
+    if (!isSupabaseConfigured) {
+      const userRecord = localUsers.find(
+        (user) =>
+          user.name.toLowerCase() === normalizedName.toLowerCase() &&
+          user.password === normalizedPassword
+      )
+
+      if (!userRecord) {
+        return { ok: false, message: 'Invalid name or password.' }
+      }
+
+      setCurrentUser({
+        id: userRecord.id,
+        firstName: userRecord.firstName,
+        lastName: userRecord.lastName,
+        name: userRecord.name,
+        email: userRecord.email,
+        country: userRecord.country,
+      })
+      setIsAuthenticated(true)
+      return { ok: true, message: `Welcome, ${userRecord.firstName}.` }
+    }
+
+    const { data: usersWithExtendedSchema, error: extendedLookupError } = await supabase
+      .from('app_users')
+      .select('id, first_name, last_name, name, email, country, password')
+      .eq('name', normalizedName)
+      .limit(1)
+
+    if (extendedLookupError) {
+      return {
+        ok: false,
+        message: 'Password login requires the updated app_users schema with a password column.',
+      }
+    }
+
+    const userRecord = usersWithExtendedSchema?.[0] || null
+
+    if (!userRecord || userRecord.password !== normalizedPassword) {
+      return { ok: false, message: 'Invalid name or password.' }
     }
 
     setCurrentUser({
       id: userRecord.id,
+      firstName: userRecord.first_name || userRecord.name,
+      lastName: userRecord.last_name || '',
       name: userRecord.name,
       email: userRecord.email,
+      country: userRecord.country || '',
     })
     setIsAuthenticated(true)
 
-    return { ok: true, message: `Welcome, ${normalizedName}.` }
+    return { ok: true, message: `Welcome, ${userRecord.name}.` }
   }
 
   const logout = () => {
@@ -786,6 +892,7 @@ export const AppProvider = ({ children }) => {
     isAuthenticated,
     currentUser,
     isBootstrapping,
+    signup,
     login,
     logout,
     materials,

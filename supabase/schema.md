@@ -1,9 +1,18 @@
+# Supabase Schema (PostgreSQL)
+
+Run the SQL below in your Supabase SQL Editor.
+
+```sql
 create extension if not exists pgcrypto;
 
 create table if not exists app_users (
   id uuid primary key default gen_random_uuid(),
+  first_name text,
+  last_name text,
   name text not null,
   email text not null,
+  country text,
+  password text,
   created_at timestamptz not null default now(),
   constraint app_users_name_email_unique unique (name, email)
 );
@@ -53,32 +62,33 @@ alter table product_ingredients enable row level security;
 alter table finished_goods enable row level security;
 alter table production_logs enable row level security;
 
-create policy if not exists "Allow anon full app_users"
+create policy "Allow anon full app_users"
   on app_users for all
   using (true)
   with check (true);
 
-create policy if not exists "Allow anon full materials"
+create policy "Allow anon full materials"
   on materials for all
   using (true)
   with check (true);
 
-create policy if not exists "Allow anon full products"
+create policy "Allow anon full products"
   on products for all
   using (true)
   with check (true);
 
-create policy if not exists "Allow anon full product_ingredients"
+create policy "Allow anon full product_ingredients"
   on product_ingredients for all
   using (true)
   with check (true);
 
-create policy if not exists "Allow anon full finished_goods"
+create policy "Allow anon full finished_goods"
   on finished_goods for all
   using (true)
   with check (true);
 
-create policy if not exists "Allow anon full production_logs"
+create policy "Allow anon full production_logs"
   on production_logs for all
   using (true)
   with check (true);
+```

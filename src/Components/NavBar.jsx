@@ -2,7 +2,7 @@ import React from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAppContext } from '../context/AppContext'
 
-const NavBar = () => {
+const NavBar = ({ isDarkMode, onToggleTheme }) => {
   const navigate = useNavigate()
   const { isAuthenticated, logout } = useAppContext()
 
@@ -13,40 +13,43 @@ const NavBar = () => {
 
   return (
     <div className="nav-bar">
-      <h1 className="brand-title">Production Tracker</h1>
-      <ul>
+      <div className="nav-brand-wrap">
+        <h1 className="brand-title">Production Tracker</h1>
+      </div>
+
+      <ul className="nav-center-links">
         <li>
           <NavLink to="/">Home</NavLink>
+        </li>
+        <li>
+          <NavLink to="/dashboard">Dashboard</NavLink>
+        </li>
+        <li>
+          <NavLink to="/addstock">Add Stock</NavLink>
+        </li>
+        <li>
+          <NavLink to="/recordproduction">Record Production</NavLink>
+        </li>
+        <li>
+          <NavLink to="/report">Reports</NavLink>
         </li>
         {!isAuthenticated && (
           <li>
             <NavLink to="/login">Login</NavLink>
           </li>
         )}
-
-        {isAuthenticated && (
-          <>
-            <li>
-              <NavLink to="/dashboard">Dashboard</NavLink>
-            </li>
-            <li>
-              <NavLink to="/addstock">Add Stock</NavLink>
-            </li>
-            <li>
-              <NavLink to="/recordproduction">Record Production</NavLink>
-            </li>
-            <li>
-              <NavLink to="/report">Reports</NavLink>
-            </li>
-          </>
-        )}
       </ul>
 
-      {!isAuthenticated ? (
-        <button onClick={() => navigate('/login', { replace: true })}>Get Started</button>
-      ) : (
-        <button onClick={handleLogout}>Logout</button>
-      )}
+      <div className="nav-cta-wrap">
+        <button type="button" className="button-secondary theme-toggle" onClick={onToggleTheme}>
+          {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+        </button>
+        {!isAuthenticated ? (
+          <button onClick={() => navigate('/login', { replace: true })}>Sign Up</button>
+        ) : (
+          <button onClick={handleLogout}>Logout</button>
+        )}
+      </div>
     </div>
   )
 }
