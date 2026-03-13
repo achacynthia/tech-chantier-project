@@ -10,6 +10,17 @@ app.use(express.json())
 
 const VALID_CURRENCIES = new Set(['FCFA', 'USD', 'NGN'])
 
+const getRequestUserKey = (req, res) => {
+  const userKey = String(req.headers['x-user-id'] || '').trim()
+
+  if (!userKey) {
+    res.status(401).json({ ok: false, message: 'Please login to access your saved data.' })
+    return null
+  }
+
+  return userKey.slice(0, 120)
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     await runQuery('select 1')
@@ -19,8 +30,11 @@ app.get('/api/health', async (_req, res) => {
   }
 })
 
-app.get('/api/products', async (_req, res) => {
+app.get('/api/products', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const { rows } = await runQuery(
       `select
          p.id,
@@ -39,10 +53,12 @@ app.get('/api/products', async (_req, res) => {
            '[]'::json
          ) as ingredients
        from products p
-       left join finished_goods fg on fg.product_id = p.id
-       left join product_ingredients pi on pi.product_id = p.id
+       left join finished_goods fg on fg.product_id = p.id and fg.user_key = p.user_key
+       left join product_ingredients pi on pi.product_id = p.id and pi.user_key = p.user_key
+       where p.user_key = $1
        group by p.id, fg.quantity
-       order by p.product_name asc`
+       order by p.product_name asc`,
+      [userKey]
     )
 
     return res.status(200).json({
@@ -68,6 +84,9 @@ app.get('/api/products', async (_req, res) => {
 
 app.post('/api/materials', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const {
       name,
       quantity,
@@ -109,9 +128,9 @@ app.post('/api/materials', async (req, res) => {
     const existingResult = await runQuery(
       `select id, name, quantity, unit
        from materials
-       where lower(name) = lower($1)
+       where user_key = $1 and lower(name) = lower($2)
        limit 1`,
-      [normalizedName]
+      [userKey, normalizedName]
     )
 
     if (existingResult.rowCount > 0) {
@@ -144,6 +163,7 @@ app.post('/api/materials', async (req, res) => {
 
     const { rows } = await runQuery(
       `insert into materials (
+        user_key,
         name,
         quantity,
         unit,
@@ -152,9 +172,10 @@ app.post('/api/materials', async (req, res) => {
         cost_currency,
         purchase_date
       )
-      values ($1, $2, $3, $4, $5, $6, $7)
+      values ($1, $2, $3, $4, $5, $6, $7, $8)
       returning id, name, quantity, unit, cost_price, cost_currency, low_stock_threshold, purchase_date`,
       [
+        userKey,
         normalizedName,
         parsedQuantity,
         normalizedUnit,
@@ -173,6 +194,9 @@ app.post('/api/materials', async (req, res) => {
 
 app.put('/api/materials/:id', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const parsedId = Number(req.params.id)
     const {
       name,
@@ -219,9 +243,9 @@ app.put('/api/materials/:id', async (req, res) => {
     const duplicateCheck = await runQuery(
       `select id
        from materials
-       where lower(name) = lower($1) and id <> $2
+       where user_key = $1 and lower(name) = lower($2) and id <> $3
        limit 1`,
-      [normalizedName, parsedId]
+      [userKey, normalizedName, parsedId]
     )
 
     if (duplicateCheck.rowCount > 0) {
@@ -229,8 +253,8 @@ app.put('/api/materials/:id', async (req, res) => {
     }
 
     const currentResult = await runQuery(
-      `select name from materials where id = $1 limit 1`,
-      [parsedId]
+      `select name from materials where id = $1 and user_key = $2 limit 1`,
+      [parsedId, userKey]
     )
 
     if (currentResult.rowCount === 0) {
@@ -248,7 +272,7 @@ app.put('/api/materials/:id', async (req, res) => {
            cost_price = $5,
            cost_currency = $6,
            purchase_date = $7
-       where id = $8
+       where id = $8 and user_key = $9
        returning id, name, quantity, unit, cost_price, cost_currency, low_stock_threshold, purchase_date`,
       [
         normalizedName,
@@ -259,14 +283,19 @@ app.put('/api/materials/:id', async (req, res) => {
         normalizedCurrency,
         normalizedPurchaseDate,
         parsedId,
+        userKey,
       ]
     )
+
+    if (rows.length === 0) {
+      return res.status(404).json({ ok: false, message: 'Material not found.' })
+    }
 
     await runQuery(
       `update product_ingredients
        set material_name = $1
-       where lower(material_name) = lower($2)`,
-      [rows[0].name, previousName]
+       where user_key = $2 and lower(material_name) = lower($3)`,
+      [rows[0].name, userKey, previousName]
     )
 
     return res.status(200).json({ ok: true, data: rows[0], message: `${rows[0].name} updated successfully.` })
@@ -277,6 +306,9 @@ app.put('/api/materials/:id', async (req, res) => {
 
 app.delete('/api/materials/:id', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const parsedId = Number(req.params.id)
     if (Number.isNaN(parsedId) || parsedId <= 0) {
       return res.status(400).json({ ok: false, message: 'Invalid material selected.' })
@@ -284,9 +316,9 @@ app.delete('/api/materials/:id', async (req, res) => {
 
     const { rows } = await runQuery(
       `delete from materials
-       where id = $1
+       where id = $1 and user_key = $2
        returning id, name`,
-      [parsedId]
+      [parsedId, userKey]
     )
 
     if (rows.length === 0) {
@@ -303,6 +335,9 @@ app.post('/api/products/configure', async (req, res) => {
   const client = await pool.connect()
 
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const {
       productId,
       productName,
@@ -359,9 +394,9 @@ app.post('/api/products/configure', async (req, res) => {
          set product_name = $1,
              unit_currency = $2,
              unit_price = $3
-         where id = $4
+         where id = $4 and user_key = $5
          returning id, product_name, unit_currency, unit_price`,
-        [name, currency, parsedUnitPrice, parsedProductId]
+        [name, currency, parsedUnitPrice, parsedProductId, userKey]
       )
 
       productRow = updateResult.rows[0] || null
@@ -371,9 +406,9 @@ app.post('/api/products/configure', async (req, res) => {
       const existingByName = await client.query(
         `select id, product_name, unit_currency, unit_price
          from products
-         where lower(product_name) = lower($1)
+         where user_key = $1 and lower(product_name) = lower($2)
          limit 1`,
-        [name]
+        [userKey, name]
       )
 
       if (existingByName.rowCount > 0) {
@@ -382,31 +417,32 @@ app.post('/api/products/configure', async (req, res) => {
            set product_name = $1,
                unit_currency = $2,
                unit_price = $3
-           where id = $4
+           where id = $4 and user_key = $5
            returning id, product_name, unit_currency, unit_price`,
-          [name, currency, parsedUnitPrice, existingByName.rows[0].id]
+          [name, currency, parsedUnitPrice, existingByName.rows[0].id, userKey]
         )
         productRow = updateByName.rows[0]
       } else {
         const insertResult = await client.query(
-          `insert into products (product_name, unit_currency, unit_price)
-           values ($1, $2, $3)
+          `insert into products (user_key, product_name, unit_currency, unit_price)
+           values ($1, $2, $3, $4)
            returning id, product_name, unit_currency, unit_price`,
-          [name, currency, parsedUnitPrice]
+          [userKey, name, currency, parsedUnitPrice]
         )
         productRow = insertResult.rows[0]
       }
     }
 
     await client.query(
-      `delete from product_ingredients where product_id = $1`,
-      [productRow.id]
+      `delete from product_ingredients where product_id = $1 and user_key = $2`,
+      [productRow.id, userKey]
     )
 
     await client.query(
-      `insert into product_ingredients (product_id, material_name, amount_per_unit)
-       values ${validIngredients.map((_, index) => `($1, $${index * 2 + 2}, $${index * 2 + 3})`).join(', ')}`,
+      `insert into product_ingredients (user_key, product_id, material_name, amount_per_unit)
+       values ${validIngredients.map((_, index) => `($1, $2, $${index * 2 + 3}, $${index * 2 + 4})`).join(', ')}`,
       [
+        userKey,
         productRow.id,
         ...validIngredients.flatMap((ingredient) => [ingredient.materialName, ingredient.amountPerUnit]),
       ]
@@ -415,9 +451,9 @@ app.post('/api/products/configure', async (req, res) => {
     const ingredientsResult = await client.query(
       `select material_name, amount_per_unit
        from product_ingredients
-       where product_id = $1
+       where product_id = $1 and user_key = $2
        order by id asc`,
-      [productRow.id]
+      [productRow.id, userKey]
     )
 
     await client.query('commit')
@@ -446,18 +482,21 @@ app.post('/api/products/configure', async (req, res) => {
 
 app.delete('/api/products/:id', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const parsedId = Number(req.params.id)
     if (Number.isNaN(parsedId) || parsedId <= 0) {
       return res.status(400).json({ ok: false, message: 'Invalid product selected.' })
     }
 
-    await runQuery(`delete from finished_goods where product_id = $1`, [parsedId])
+    await runQuery(`delete from finished_goods where product_id = $1 and user_key = $2`, [parsedId, userKey])
 
     const { rows } = await runQuery(
       `delete from products
-       where id = $1
+       where id = $1 and user_key = $2
        returning id, product_name`,
-      [parsedId]
+      [parsedId, userKey]
     )
 
     if (rows.length === 0) {
@@ -470,12 +509,17 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 })
 
-app.get('/api/production-logs', async (_req, res) => {
+app.get('/api/production-logs', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const { rows } = await runQuery(
       `select id, product_id, product_name, quantity, material_summary, created_at
        from production_logs
-       order by created_at desc`
+       where user_key = $1
+       order by created_at desc`,
+      [userKey]
     )
 
     return res.status(200).json({ ok: true, data: rows })
@@ -488,6 +532,9 @@ app.post('/api/production', async (req, res) => {
   const client = await pool.connect()
 
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const { productId, quantity, productionDate } = req.body || {}
     const parsedProductId = Number(productId)
     const parsedQuantity = Number(quantity)
@@ -507,9 +554,9 @@ app.post('/api/production', async (req, res) => {
     const productResult = await client.query(
       `select id, product_name
        from products
-       where id = $1
+       where id = $1 and user_key = $2
        limit 1`,
-      [parsedProductId]
+      [parsedProductId, userKey]
     )
 
     if (productResult.rowCount === 0) {
@@ -522,8 +569,8 @@ app.post('/api/production', async (req, res) => {
     const ingredientResult = await client.query(
       `select material_name, amount_per_unit
        from product_ingredients
-       where product_id = $1`,
-      [parsedProductId]
+       where product_id = $1 and user_key = $2`,
+      [parsedProductId, userKey]
     )
 
     if (ingredientResult.rowCount === 0) {
@@ -537,10 +584,10 @@ app.post('/api/production', async (req, res) => {
       const materialResult = await client.query(
         `select id, name, quantity, unit, low_stock_threshold
          from materials
-         where lower(name) = lower($1)
+         where user_key = $1 and lower(name) = lower($2)
          limit 1
          for update`,
-        [ingredient.material_name]
+        [userKey, ingredient.material_name]
       )
 
       if (materialResult.rowCount === 0) {
@@ -580,10 +627,10 @@ app.post('/api/production', async (req, res) => {
     const finishedGoodResult = await client.query(
       `select product_id, quantity
        from finished_goods
-       where product_id = $1
+       where product_id = $1 and user_key = $2
        limit 1
        for update`,
-      [parsedProductId]
+      [parsedProductId, userKey]
     )
 
     const updatedFinishedQuantity = Number(((Number(finishedGoodResult.rows[0]?.quantity || 0)) + parsedQuantity).toFixed(2))
@@ -594,28 +641,30 @@ app.post('/api/production', async (req, res) => {
          set quantity = $1,
              product_name = $2,
              updated_at = now()
-         where product_id = $3`,
-        [updatedFinishedQuantity, productRow.product_name, parsedProductId]
+         where product_id = $3 and user_key = $4`,
+        [updatedFinishedQuantity, productRow.product_name, parsedProductId, userKey]
       )
     } else {
       await client.query(
-        `insert into finished_goods (product_id, product_name, quantity)
-         values ($1, $2, $3)`,
-        [parsedProductId, productRow.product_name, updatedFinishedQuantity]
+        `insert into finished_goods (user_key, product_id, product_name, quantity)
+         values ($1, $2, $3, $4)`,
+        [userKey, parsedProductId, productRow.product_name, updatedFinishedQuantity]
       )
     }
 
     const logResult = await client.query(
       `insert into production_logs (
+        user_key,
         product_id,
         product_name,
         quantity,
         material_summary,
         created_at
       )
-      values ($1, $2, $3, $4::jsonb, $5)
+      values ($1, $2, $3, $4, $5::jsonb, $6)
       returning id, product_id, product_name, quantity, material_summary, created_at`,
       [
+        userKey,
         parsedProductId,
         productRow.product_name,
         parsedQuantity,
@@ -647,12 +696,17 @@ app.post('/api/production', async (req, res) => {
   }
 })
 
-app.get('/api/materials', async (_req, res) => {
+app.get('/api/materials', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const { rows } = await runQuery(
       `select id, name, quantity, unit, cost_price, cost_currency, low_stock_threshold, purchase_date
        from materials
-       order by name asc`
+       where user_key = $1
+       order by name asc`,
+      [userKey]
     )
 
     return res.status(200).json({
@@ -675,6 +729,9 @@ app.get('/api/materials', async (_req, res) => {
 
 app.get('/api/sales', async (req, res) => {
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const {
       productId = '',
       date = '',
@@ -683,8 +740,8 @@ app.get('/api/sales', async (req, res) => {
       pageSize = '10',
     } = req.query
 
-    const filters = []
-    const values = []
+    const filters = ['user_key = $1']
+    const values = [userKey]
 
     if (productId) {
       values.push(Number(productId))
@@ -732,6 +789,9 @@ app.post('/api/sales', async (req, res) => {
   const client = await pool.connect()
 
   try {
+    const userKey = getRequestUserKey(req, res)
+    if (!userKey) return
+
     const {
       productId,
       quantitySold,
@@ -755,9 +815,9 @@ app.post('/api/sales', async (req, res) => {
     const productResult = await client.query(
       `select id, product_name, unit_currency, unit_price
        from products
-       where id = $1
+       where id = $1 and user_key = $2
        for update`,
-      [parsedProductId]
+      [parsedProductId, userKey]
     )
 
     if (productResult.rowCount === 0) {
@@ -770,9 +830,9 @@ app.post('/api/sales', async (req, res) => {
     const finishedGoodsResult = await client.query(
       `select product_id, product_name, quantity
        from finished_goods
-       where product_id = $1
+       where product_id = $1 and user_key = $2
        for update`,
-      [parsedProductId]
+      [parsedProductId, userKey]
     )
 
     const availableQuantity = Number(finishedGoodsResult.rows[0]?.quantity || 0)
@@ -795,12 +855,13 @@ app.post('/api/sales', async (req, res) => {
       `update finished_goods
        set quantity = $1,
            updated_at = now()
-       where product_id = $2`,
-      [quantityLeft, parsedProductId]
+       where product_id = $2 and user_key = $3`,
+      [quantityLeft, parsedProductId, userKey]
     )
 
     const insertSaleResult = await client.query(
       `insert into sales (
+        user_key,
         product_id,
         product_name,
         quantity_sold,
@@ -810,9 +871,10 @@ app.post('/api/sales', async (req, res) => {
         quantity_left,
         sale_date
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       returning id, product_id, product_name, quantity_sold, unit_currency, unit_price, total_amount, quantity_left, sale_date, created_at`,
       [
+        userKey,
         parsedProductId,
         product.product_name,
         parsedQuantity,

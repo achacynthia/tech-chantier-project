@@ -4,7 +4,7 @@ import { useAppContext } from '../context/AppContext'
 
 const NavBar = ({ isDarkMode, onToggleTheme }) => {
   const navigate = useNavigate()
-  const { isAuthenticated, logout } = useAppContext()
+  const { isAuthenticated, currentUser, logout } = useAppContext()
 
   const handleLogout = async () => {
     await logout()
@@ -15,6 +15,9 @@ const NavBar = ({ isDarkMode, onToggleTheme }) => {
     <div className="nav-bar">
       <div className="nav-brand-wrap">
         <h1 className="brand-title">Production Tracker</h1>
+        {isAuthenticated && currentUser?.name && (
+          <p className="brand-subtitle">{currentUser.name}</p>
+        )}
       </div>
 
       <ul className="nav-center-links">

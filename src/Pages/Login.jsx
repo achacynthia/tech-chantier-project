@@ -48,6 +48,7 @@ const Login = () => {
       return
     }
 
+    window.alert(result.message || 'Welcome back!')
     setErrorMessage('')
     navigate('/dashboard', { replace: true })
   }

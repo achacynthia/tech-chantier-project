@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 const isBackendConfigured = false
 const backendClient = null
@@ -48,25 +48,9 @@ const LOW_STOCK_THRESHOLD = 10
 const VALID_CURRENCIES = new Set(['FCFA', 'USD', 'NGN'])
 const DEFAULT_PURCHASE_DATE = new Date().toISOString().slice(0, 10)
 
-const initialMaterials = [
-  { id: 1, name: 'Flour (kg)', quantity: 120, unit: 'kg', lowStockThreshold: LOW_STOCK_THRESHOLD, costPrice: 0, costCurrency: 'USD', purchaseDate: DEFAULT_PURCHASE_DATE },
-  { id: 2, name: 'Yeast (g)', quantity: 1500, unit: 'g', lowStockThreshold: LOW_STOCK_THRESHOLD, costPrice: 0, costCurrency: 'USD', purchaseDate: DEFAULT_PURCHASE_DATE },
-  { id: 3, name: 'Sugar (kg)', quantity: 40, unit: 'kg', lowStockThreshold: LOW_STOCK_THRESHOLD, costPrice: 0, costCurrency: 'USD', purchaseDate: DEFAULT_PURCHASE_DATE },
-]
+const initialMaterials = []
 
-const initialProducts = [
-  {
-    id: 1,
-    productName: 'Bread Loaf',
-    unitCurrency: 'USD',
-    unitPrice: 0,
-    ingredients: [
-      { materialName: 'Flour (kg)', amountPerUnit: 0.5 },
-      { materialName: 'Yeast (g)', amountPerUnit: 5 },
-      { materialName: 'Sugar (kg)', amountPerUnit: 0.03 },
-    ],
-  },
-]
+const initialProducts = []
 
 const mapMaterialRecord = (record) => ({
   id: Number(record.id),
@@ -136,6 +120,20 @@ const getReadableAuthError = (errorMessage, defaultMessage) => {
 
 const isLikelyEmail = (value) => (value || '').includes('@')
 
+const getStoredSessionUserId = () => {
+  try {
+    const rawSession = localStorage.getItem(LOCAL_SESSION_KEY)
+    if (!rawSession) {
+      return ''
+    }
+
+    const parsedSession = JSON.parse(rawSession)
+    return parsedSession?.id ? String(parsedSession.id) : ''
+  } catch {
+    return ''
+  }
+}
+
 const apiRequest = async (path, options = {}) => {
   if (!hasNodeApi) {
     throw new Error('Node API is not configured.')
@@ -153,6 +151,7 @@ const apiRequest = async (path, options = {}) => {
       const response = await fetch(`${baseUrl}${path}`, {
         headers: {
           'Content-Type': 'application/json',
+          ...(getStoredSessionUserId() ? { 'x-user-id': getStoredSessionUserId() } : {}),
           ...(options.headers || {}),
         },
         ...options,
@@ -185,6 +184,7 @@ const apiRequest = async (path, options = {}) => {
 }
 
 export const AppProvider = ({ children }) => {
+  const noticeTimerRef = useRef(null)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (isBackendConfigured) {
       return false
@@ -213,7 +213,7 @@ export const AppProvider = ({ children }) => {
   const [productionLogs, setProductionLogs] = useState([])
   const [salesLogs, setSalesLogs] = useState([])
   const [stockPurchases, setStockPurchases] = useState(() => {
-    if (isBackendConfigured) {
+    if (isBackendConfigured || hasNodeApi) {
       return []
     }
 
@@ -241,9 +241,27 @@ export const AppProvider = ({ children }) => {
       return []
     }
   })
+  const [sideNotice, setSideNotice] = useState('')
+
+  const notify = (message) => {
+    if (!message) {
+      return
+    }
+
+    setSideNotice(message)
+
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current)
+    }
+
+    noticeTimerRef.current = setTimeout(() => {
+      setSideNotice('')
+      noticeTimerRef.current = null
+    }, 3200)
+  }
 
   useEffect(() => {
-    if (isBackendConfigured) {
+    if (isBackendConfigured || hasNodeApi) {
       return
     }
 
@@ -387,6 +405,7 @@ export const AppProvider = ({ children }) => {
         setFinishedGoods([])
         setProductionLogs([])
         setSalesLogs([])
+        setStockPurchases([])
         setIsBootstrapping(false)
         return
       }
@@ -420,68 +439,8 @@ export const AppProvider = ({ children }) => {
         }
       }
 
-      const seedDefaultData = async () => {
-        const { error: materialsSeedError } = await backendClient.from('materials').upsert(
-          initialMaterials.map((material) => ({
-            name: material.name,
-            quantity: material.quantity,
-            unit: material.unit,
-            low_stock_threshold: material.lowStockThreshold,
-            cost_price: material.costPrice,
-            cost_currency: material.costCurrency,
-            purchase_date: material.purchaseDate,
-          })),
-          { onConflict: 'name' }
-        )
-
-        if (materialsSeedError) throw materialsSeedError
-
-        const { data: existingBread } = await backendClient
-          .from('products')
-          .select('id')
-          .eq('product_name', initialProducts[0].productName)
-          .maybeSingle()
-
-        let breadId = existingBread?.id
-
-        if (!breadId) {
-          const { data: insertedProduct, error: insertProductError } = await backendClient
-            .from('products')
-            .insert([
-              {
-                product_name: initialProducts[0].productName,
-                unit_currency: initialProducts[0].unitCurrency,
-                unit_price: initialProducts[0].unitPrice,
-              },
-            ])
-            .select('id')
-            .single()
-
-          if (insertProductError) throw insertProductError
-          breadId = insertedProduct.id
-        }
-
-        if (breadId) {
-          await backendClient.from('product_ingredients').delete().eq('product_id', breadId)
-          const { error: ingredientSeedError } = await backendClient.from('product_ingredients').insert(
-            initialProducts[0].ingredients.map((ingredient) => ({
-              product_id: breadId,
-              material_name: ingredient.materialName,
-              amount_per_unit: ingredient.amountPerUnit,
-            }))
-          )
-
-          if (ingredientSeedError) throw ingredientSeedError
-        }
-      }
-
       try {
-        let allData = await loadFromBackend()
-
-        if (allData.materialsData.length === 0 && allData.productsData.length === 0) {
-          await seedDefaultData()
-          allData = await loadFromBackend()
-        }
+        const allData = await loadFromBackend()
 
         setMaterials(allData.materialsData.map(mapMaterialRecord))
         setProducts(allData.productsData.map(mapProductRecord))
@@ -576,6 +535,7 @@ export const AppProvider = ({ children }) => {
         )
 
         setSalesLogs(salesData.map(mapSalesRecord))
+        setStockPurchases([])
 
         setProductionLogs(
           logsData.map((log) => ({
@@ -734,7 +694,7 @@ export const AppProvider = ({ children }) => {
         country: userRecord.country,
       })
       setIsAuthenticated(true)
-      return { ok: true, message: `Welcome, ${userRecord.firstName}.` }
+      return { ok: true, message: `Welcome back, ${userRecord.firstName || userRecord.name}!` }
     }
 
     let matchedEmail = null
@@ -785,7 +745,7 @@ export const AppProvider = ({ children }) => {
       await hydrateAuthUser(signInData.user)
       return {
         ok: true,
-        message: `Welcome, ${signInData.user.user_metadata?.first_name || signInData.user.email}.`,
+        message: `Welcome back, ${signInData.user.user_metadata?.first_name || signInData.user.email}!`,
       }
     }
 
@@ -809,7 +769,19 @@ export const AppProvider = ({ children }) => {
     }
   }
 
+  const blockGuestWrite = () => {
+    notify('Sign up or log in to save your data.')
+    return {
+      ok: false,
+      message: '',
+    }
+  }
+
   const addMaterial = async (materialPayload) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const name = materialPayload.name.trim()
     if (!name) {
       return { ok: false, message: 'Material name is required.' }
@@ -1018,6 +990,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const updateMaterial = async (materialId, materialPayload) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const parsedMaterialId = Number(materialId)
     if (Number.isNaN(parsedMaterialId)) {
       return { ok: false, message: 'Invalid material selected.' }
@@ -1184,6 +1160,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const deleteMaterial = async (materialId) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const parsedMaterialId = Number(materialId)
     if (Number.isNaN(parsedMaterialId)) {
       return { ok: false, message: 'Invalid material selected.' }
@@ -1230,6 +1210,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const configureProduct = async ({ productId, productName, unitCurrency, unitPrice, ingredients }) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const name = productName.trim()
     if (!name) {
       return { ok: false, message: 'Product name is required.' }
@@ -1431,6 +1415,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const deleteProduct = async (productId) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const parsedProductId = Number(productId)
     if (Number.isNaN(parsedProductId)) {
       return { ok: false, message: 'Invalid product selected.' }
@@ -1491,6 +1479,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const recordProduction = async ({ productId, quantity, productionDate }) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const parsedProductId = Number(productId)
     const parsedQuantity = Number(quantity)
     const selectedProductionDate = productionDate?.trim() || new Date().toISOString().slice(0, 10)
@@ -1774,6 +1766,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const recordSale = async ({ productId, quantitySold, saleDate, unitPrice }) => {
+    if (!isAuthenticated) {
+      return blockGuestWrite()
+    }
+
     const parsedProductId = Number(productId)
     const parsedQuantitySold = Number(quantitySold)
     const parsedUnitPrice = Number(unitPrice)
@@ -1963,6 +1959,8 @@ export const AppProvider = ({ children }) => {
     totalFinishedGoods,
     totalProductionRuns,
     totalSalesAmount,
+    sideNotice,
+    notify,
     addMaterial,
     updateMaterial,
     deleteMaterial,
