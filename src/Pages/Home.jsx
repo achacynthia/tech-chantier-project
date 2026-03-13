@@ -24,9 +24,6 @@ const Home = () => {
         <div className="hero-visual" aria-hidden="true">
           <div className="hero-visual-card">
             <h3>Today Overview</h3>
-            <p>Stock health: Strong</p>
-            <p>Production logs: Updated</p>
-            <p>Low-stock alerts: 2 items</p>
           </div>
         </div>
       </section>

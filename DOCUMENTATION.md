@@ -45,7 +45,7 @@ Production Tracker reduces these issues by giving visibility into stock and prod
 - Finished goods accumulation
 - Dashboard metrics and low-stock alerts
 - Reports for stock, finished goods, and production history
-- Basic authentication flow with route protection
+- Supabase Auth (email/password) with route protection and persisted sessions
 
 ## 7) Design Notes
 Implemented based on SRS guidance:
@@ -57,7 +57,7 @@ Implemented based on SRS guidance:
 - Frontend: React + Vite
 - Routing: React Router
 - Styling: CSS (with Tailwind available in project dependencies)
-- Backend: Not yet integrated (currently local in-memory state for MVP)
+- Backend/Database: Supabase (PostgreSQL + Supabase JS client)
 - Deployment target: Vercel
 - Version control: GitHub
 
@@ -80,25 +80,32 @@ Implemented based on SRS guidance:
 - `src/Components/NavBar.jsx` adapts links based on auth state
 
 ## 10) Limitations (Current MVP)
-- Authentication is frontend-only (no backend token/session)
-- Data is in-memory and resets on refresh
 - No payments (out of scope)
-- No user/role management yet
+- No advanced user/role management yet
 
 ## 11) Run Locally
 1. Install dependencies:
    ```bash
    npm install
    ```
-2. Start development server:
+2. Configure Supabase environment:
+   ```bash
+   cp .env.example .env
+   ```
+   Then update `.env` with your Supabase values:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+3. In Supabase Dashboard, enable Email auth provider and set URL configuration.
+4. Initialize database schema:
+   - Open Supabase SQL Editor
+   - Run SQL in `supabase/schema.sql`
+5. Start development server:
    ```bash
    npm run dev
    ```
-3. Open the local URL shown in terminal
+6. Open the local URL shown in terminal
 
 ## 12) Suggested Next Steps
-- Connect to provided backend APIs
-- Persist auth and production data (database)
-- Add user/account management for admin role
+- Add role-based access control (owner/admin/staff) with stricter RLS ownership rules
 - Add validation/error boundaries and API failure handling
 - Add exportable reports (CSV/PDF)

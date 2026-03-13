@@ -6,6 +6,7 @@ import Dashboard from './Pages/Dashboard'
 import AddStock from './Pages/AddStock'
 import Report from './Pages/Report'
 import RecordProduction from './Pages/RecordProduction'
+import Sales from './Pages/Sales'
 import Rootlayout from './Layout/Rootlayout'
 import ProtectedRoute from './Components/ProtectedRoute'
 
@@ -45,6 +46,14 @@ const App = () => {
           element={
             <ProtectedRoute>
               <Report />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path='sales'
+          element={
+            <ProtectedRoute>
+              <Sales />
             </ProtectedRoute>
           }
         />

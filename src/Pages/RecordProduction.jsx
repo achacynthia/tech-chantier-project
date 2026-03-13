@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
 import { useAppContext } from '../context/AppContext'
 
+const getTodayDate = () => new Date().toISOString().slice(0, 10)
+
 const RecordProduction = () => {
   const { products, productionLogs, recordProduction } = useAppContext()
-  const [formData, setFormData] = useState({ productId: '', quantity: '' })
+  const [formData, setFormData] = useState({ productId: '', quantity: '', productionDate: getTodayDate() })
   const [feedbackMessage, setFeedbackMessage] = useState('')
   const [latestSummary, setLatestSummary] = useState(null)
 
@@ -19,7 +21,7 @@ const RecordProduction = () => {
     const result = await recordProduction(formData)
     setFeedbackMessage(result.message)
     if (result.ok) {
-      setFormData({ productId: '', quantity: '' })
+      setFormData({ productId: '', quantity: '', productionDate: getTodayDate() })
       setLatestSummary(result.summary || null)
     } else {
       setLatestSummary(null)
@@ -52,6 +54,15 @@ const RecordProduction = () => {
             value={formData.quantity}
             onChange={handleChange}
             placeholder="50"
+          />
+
+          <label htmlFor="productionDate">Production Date</label>
+          <input
+            id="productionDate"
+            name="productionDate"
+            type="date"
+            value={formData.productionDate}
+            onChange={handleChange}
           />
 
           {feedbackMessage && <p className="info-text">{feedbackMessage}</p>}

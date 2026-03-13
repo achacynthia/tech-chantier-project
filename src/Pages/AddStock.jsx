@@ -1,11 +1,25 @@
 import React, { useMemo, useState } from 'react'
 import { useAppContext } from '../context/AppContext'
 
+const currencyOptions = [
+  { value: 'FCFA', symbol: 'FCFA' },
+  { value: 'USD', symbol: '$' },
+  { value: 'NGN', symbol: '₦' },
+]
+
+const getCurrencySymbol = (currencyCode) =>
+  currencyOptions.find((currencyOption) => currencyOption.value === currencyCode)?.symbol || '$'
+
+const getTodayDate = () => new Date().toISOString().slice(0, 10)
+
 const emptyMaterialForm = {
   name: '',
   quantity: '',
   unit: '',
+  costCurrency: 'USD',
+  costPrice: '',
   lowStockThreshold: '',
+  purchaseDate: getTodayDate(),
 }
 
 const AddStock = () => {
@@ -15,9 +29,15 @@ const AddStock = () => {
   const [editingMaterialId, setEditingMaterialId] = useState(null)
   const [editingProductId, setEditingProductId] = useState(null)
   const [productName, setProductName] = useState('')
+  const [unitCurrency, setUnitCurrency] = useState('USD')
+  const [unitPrice, setUnitPrice] = useState('')
   const [recipeRows, setRecipeRows] = useState([{ materialName: '', amountPerUnit: '' }])
-  const [materialMessage, setMaterialMessage] = useState('')
-  const [recipeMessage, setRecipeMessage] = useState('')
+
+  const showResultAlert = (result) => {
+    if (result?.message) {
+      window.alert(result.message)
+    }
+  }
 
   const materialOptions = useMemo(() => materials, [materials])
 
@@ -33,11 +53,11 @@ const AddStock = () => {
     const result = editingMaterialId
       ? await updateMaterial(editingMaterialId, materialForm)
       : await addMaterial(materialForm)
-    setMaterialMessage(result.message)
+    showResultAlert(result)
 
     if (result.ok) {
       setEditingMaterialId(null)
-      setMaterialForm(emptyMaterialForm)
+      setMaterialForm({ ...emptyMaterialForm, purchaseDate: getTodayDate() })
     }
   }
 
@@ -47,25 +67,26 @@ const AddStock = () => {
       name: material.name,
       quantity: material.quantity,
       unit: material.unit,
+      costCurrency: material.costCurrency || 'USD',
+      costPrice: material.costPrice ?? '',
       lowStockThreshold: material.lowStockThreshold,
+      purchaseDate: material.purchaseDate || getTodayDate(),
     })
-    setMaterialMessage(`Editing ${material.name}. Update and save to apply changes.`)
   }
 
   const removeMaterial = async (materialId) => {
     if (editingMaterialId === materialId) {
       setEditingMaterialId(null)
-      setMaterialForm(emptyMaterialForm)
+      setMaterialForm({ ...emptyMaterialForm, purchaseDate: getTodayDate() })
     }
 
     const result = await deleteMaterial(materialId)
-    setMaterialMessage(result.message)
+    showResultAlert(result)
   }
 
   const cancelMaterialEdit = () => {
     setEditingMaterialId(null)
-    setMaterialForm(emptyMaterialForm)
-    setMaterialMessage('')
+    setMaterialForm({ ...emptyMaterialForm, purchaseDate: getTodayDate() })
   }
 
   const updateRecipeRow = (index, field, value) => {
@@ -87,12 +108,16 @@ const AddStock = () => {
     const result = await configureProduct({
       productId: editingProductId,
       productName,
+      unitCurrency,
+      unitPrice,
       ingredients: recipeRows,
     })
-    setRecipeMessage(result.message)
+    showResultAlert(result)
     if (result.ok) {
       setEditingProductId(null)
       setProductName('')
+      setUnitCurrency('USD')
+      setUnitPrice('')
       setRecipeRows([{ materialName: '', amountPerUnit: '' }])
     }
   }
@@ -100,31 +125,35 @@ const AddStock = () => {
   const editRecipe = (product) => {
     setEditingProductId(product.id)
     setProductName(product.productName)
+    setUnitCurrency(product.unitCurrency || 'USD')
+    setUnitPrice(product.unitPrice ?? '')
     setRecipeRows(
       product.ingredients.map((ingredient) => ({
         materialName: ingredient.materialName,
         amountPerUnit: ingredient.amountPerUnit,
       }))
     )
-    setRecipeMessage(`Editing ${product.productName}. Update and save to apply changes.`)
   }
 
   const removeRecipe = async (productId) => {
     if (editingProductId === productId) {
       setEditingProductId(null)
       setProductName('')
+      setUnitCurrency('USD')
+      setUnitPrice('')
       setRecipeRows([{ materialName: '', amountPerUnit: '' }])
     }
 
     const result = await deleteProduct(productId)
-    setRecipeMessage(result.message)
+    showResultAlert(result)
   }
 
   const cancelEdit = () => {
     setEditingProductId(null)
     setProductName('')
+    setUnitCurrency('USD')
+    setUnitPrice('')
     setRecipeRows([{ materialName: '', amountPerUnit: '' }])
-    setRecipeMessage('')
   }
 
   return (
@@ -178,7 +207,41 @@ const AddStock = () => {
             placeholder="e.g. 10"
           />
 
-          {materialMessage && <p className="info-text">{materialMessage}</p>}
+          <label htmlFor="costPrice">Cost Price</label>
+          <div className="price-currency-row">
+            <input
+              id="costPrice"
+              name="costPrice"
+              type="number"
+              min="0"
+              step="0.01"
+              value={materialForm.costPrice}
+              onChange={handleMaterialChange}
+              placeholder="e.g. 25.00"
+            />
+            <select
+              id="costCurrency"
+              name="costCurrency"
+              value={materialForm.costCurrency}
+              onChange={handleMaterialChange}
+            >
+              {currencyOptions.map((currencyOption) => (
+                <option key={currencyOption.value} value={currencyOption.value}>
+                  {currencyOption.value}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label htmlFor="purchaseDate">Purchase Date</label>
+          <input
+            id="purchaseDate"
+            name="purchaseDate"
+            type="date"
+            value={materialForm.purchaseDate}
+            onChange={handleMaterialChange}
+          />
+
           <div className="inline-actions">
             <button type="submit">{editingMaterialId ? 'Update Material' : 'Save Stock'}</button>
             {editingMaterialId && (
@@ -203,6 +266,30 @@ const AddStock = () => {
             onChange={(event) => setProductName(event.target.value)}
             placeholder="Bread Loaf"
           />
+
+          <label htmlFor="unitPrice">Unit Price</label>
+          <div className="price-currency-row">
+            <input
+              id="unitPrice"
+              type="number"
+              min="0"
+              step="0.01"
+              value={unitPrice}
+              onChange={(event) => setUnitPrice(event.target.value)}
+              placeholder="e.g. 2.50"
+            />
+            <select
+              value={unitCurrency}
+              onChange={(event) => setUnitCurrency(event.target.value)}
+              aria-label="Select unit price currency"
+            >
+              {currencyOptions.map((currencyOption) => (
+                <option key={currencyOption.value} value={currencyOption.value}>
+                  {currencyOption.value}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {recipeRows.map((recipeRow, index) => (
             <div className="recipe-row" key={`recipe-row-${index}`}>
@@ -244,7 +331,6 @@ const AddStock = () => {
               </button>
             )}
           </div>
-          {recipeMessage && <p className="info-text">{recipeMessage}</p>}
         </form>
       </section>
 
@@ -260,7 +346,9 @@ const AddStock = () => {
                   <th>Material</th>
                   <th>Quantity</th>
                   <th>Unit</th>
+                  <th>Cost Price</th>
                   <th>Low Stock Threshold</th>
+                  <th>Purchase Date</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -270,7 +358,12 @@ const AddStock = () => {
                     <td>{material.name}</td>
                     <td>{material.quantity}</td>
                     <td>{material.unit}</td>
+                    <td>
+                      {Number(material.costPrice || 0).toFixed(2)}{' '}
+                      {getCurrencySymbol(material.costCurrency || 'USD')}
+                    </td>
                     <td>{material.lowStockThreshold}</td>
+                    <td>{new Date(`${material.purchaseDate || getTodayDate()}T12:00:00`).toLocaleDateString()}</td>
                     <td>
                       <div className="inline-actions compact-actions">
                         <button
@@ -308,7 +401,13 @@ const AddStock = () => {
             {products.map((product) => (
               <article className="recipe-card" key={product.id}>
                 <div className="recipe-card-header">
-                  <h3>{product.productName}</h3>
+                  <div>
+                    <h3>{product.productName}</h3>
+                    <p className="muted-text">
+                      Unit Price: {Number(product.unitPrice || 0).toFixed(2)}{' '}
+                      {getCurrencySymbol(product.unitCurrency || 'USD')}
+                    </p>
+                  </div>
                   <div className="inline-actions compact-actions">
                     <button type="button" className="button-secondary" onClick={() => editRecipe(product)}>
                       Edit

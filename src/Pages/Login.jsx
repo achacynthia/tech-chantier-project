@@ -61,10 +61,11 @@ const Login = () => {
       return
     }
 
+    window.alert(result.message || 'Account created successfully.')
     setErrorMessage('')
     setIsSignupMode(false)
     setLoginData({
-      name: `${signupData.firstName} ${signupData.lastName}`.trim(),
+      name: signupData.email.trim().toLowerCase(),
       password: '',
     })
     setSignupData({
@@ -89,8 +90,8 @@ const Login = () => {
       <h1>{isSignupMode ? 'Sign Up' : 'Login'}</h1>
       <p className="muted-text">
         {isSignupMode
-          ? 'Create your account first, then login with your name and password.'
-          : 'Login with your registered name and password to continue.'}
+          ? 'Create your account quickly. Only email and password are required.'
+          : 'Login with your name or email and password.'}
       </p>
 
       <div className="inline-actions auth-mode-actions">
@@ -112,14 +113,14 @@ const Login = () => {
 
       {!isSignupMode ? (
         <form className="form-grid" onSubmit={handleLoginSubmit}>
-          <label htmlFor="name">Name</label>
+          <label htmlFor="name">Name or Email</label>
           <input
             id="name"
             name="name"
             type="text"
             value={loginData.name}
             onChange={handleLoginChange}
-            placeholder="e.g. John Doe"
+            placeholder="e.g. John Doe or owner@business.com"
           />
 
           <label htmlFor="password">Password</label>
@@ -184,7 +185,7 @@ const Login = () => {
               type={showPassword ? 'text' : 'password'}
               value={signupData.password}
               onChange={handleSignupChange}
-              placeholder="At least 6 characters"
+              placeholder="At least 8 chars, Aa + 1"
             />
             <button
               type="button"

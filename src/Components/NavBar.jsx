@@ -6,8 +6,8 @@ const NavBar = ({ isDarkMode, onToggleTheme }) => {
   const navigate = useNavigate()
   const { isAuthenticated, logout } = useAppContext()
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     navigate('/', { replace: true })
   }
 
@@ -29,6 +29,9 @@ const NavBar = ({ isDarkMode, onToggleTheme }) => {
         </li>
         <li>
           <NavLink to="/recordproduction">Record Production</NavLink>
+        </li>
+        <li>
+          <NavLink to="/sales">Sales</NavLink>
         </li>
         <li>
           <NavLink to="/report">Reports</NavLink>

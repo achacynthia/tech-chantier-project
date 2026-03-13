@@ -3,18 +3,26 @@ import { isSupabaseConfigured, supabase } from '../lib/supabaseClient'
 
 const AppContext = createContext(null)  // Create the context with a default value of null
 
+const LOCAL_USERS_KEY = 'production_tracker_local_users'
+const LOCAL_SESSION_KEY = 'production_tracker_local_session'
+const LOCAL_STOCK_PURCHASES_KEY = 'production_tracker_stock_purchases'
+
 const LOW_STOCK_THRESHOLD = 10
+const VALID_CURRENCIES = new Set(['FCFA', 'USD', 'NGN'])
+const DEFAULT_PURCHASE_DATE = new Date().toISOString().slice(0, 10)
 
 const initialMaterials = [
-  { id: 1, name: 'Flour (kg)', quantity: 120, unit: 'kg', lowStockThreshold: LOW_STOCK_THRESHOLD },
-  { id: 2, name: 'Yeast (g)', quantity: 1500, unit: 'g', lowStockThreshold: LOW_STOCK_THRESHOLD },
-  { id: 3, name: 'Sugar (kg)', quantity: 40, unit: 'kg', lowStockThreshold: LOW_STOCK_THRESHOLD },
+  { id: 1, name: 'Flour (kg)', quantity: 120, unit: 'kg', lowStockThreshold: LOW_STOCK_THRESHOLD, costPrice: 0, costCurrency: 'USD', purchaseDate: DEFAULT_PURCHASE_DATE },
+  { id: 2, name: 'Yeast (g)', quantity: 1500, unit: 'g', lowStockThreshold: LOW_STOCK_THRESHOLD, costPrice: 0, costCurrency: 'USD', purchaseDate: DEFAULT_PURCHASE_DATE },
+  { id: 3, name: 'Sugar (kg)', quantity: 40, unit: 'kg', lowStockThreshold: LOW_STOCK_THRESHOLD, costPrice: 0, costCurrency: 'USD', purchaseDate: DEFAULT_PURCHASE_DATE },
 ]
 
 const initialProducts = [
   {
     id: 1,
     productName: 'Bread Loaf',
+    unitCurrency: 'USD',
+    unitPrice: 0,
     ingredients: [
       { materialName: 'Flour (kg)', amountPerUnit: 0.5 },
       { materialName: 'Yeast (g)', amountPerUnit: 5 },
@@ -29,26 +37,257 @@ const mapMaterialRecord = (record) => ({
   quantity: Number(record.quantity),
   unit: record.unit,
   lowStockThreshold: Number(record.low_stock_threshold),
+  costPrice: Number(record.cost_price || 0),
+  costCurrency: record.cost_currency || 'USD',
+  purchaseDate: record.purchase_date || DEFAULT_PURCHASE_DATE,
 })
 
 const mapProductRecord = (record) => ({
   id: Number(record.id),
   productName: record.product_name,
+  unitCurrency: record.unit_currency || 'USD',
+  unitPrice: Number(record.unit_price || 0),
   ingredients: (record.product_ingredients || []).map((ingredient) => ({
     materialName: ingredient.material_name,
     amountPerUnit: Number(ingredient.amount_per_unit),
   })),
 })
 
+const mapSalesRecord = (record) => ({
+  id: Number(record.id),
+  productId: record.product_id ? Number(record.product_id) : null,
+  productName: record.product_name,
+  quantitySold: Number(record.quantity_sold),
+  unitCurrency: record.unit_currency || 'USD',
+  unitPrice: Number(record.unit_price || 0),
+  totalAmount: Number(record.total_amount || 0),
+  quantityLeft: Number(record.quantity_left || 0),
+  saleDate: record.sale_date,
+  createdAt: record.created_at || `${record.sale_date}T12:00:00.000Z`,
+})
+
+const mapAppUserRecord = (record) => ({
+  id: record.auth_user_id || record.id,
+  firstName: record.first_name || '',
+  lastName: record.last_name || '',
+  name: record.name || `${record.first_name || ''} ${record.last_name || ''}`.trim(),
+  email: record.email || '',
+  country: record.country || '',
+})
+
+const getReadableAuthError = (errorMessage, defaultMessage) => {
+  const normalizedMessage = (errorMessage || '').toLowerCase()
+
+  if (normalizedMessage.includes('email rate limit exceeded')) {
+    return 'Too many signup email requests. If this account already exists, use Login now. Otherwise wait a few minutes and try again.'
+  }
+
+  if (normalizedMessage.includes('email not confirmed')) {
+    return 'Please confirm your email first, then login.'
+  }
+
+  if (normalizedMessage.includes('invalid login credentials')) {
+    return 'Invalid email or password.'
+  }
+
+  if (normalizedMessage.includes('user already registered')) {
+    return 'This email is already registered. Please login instead.'
+  }
+
+  return errorMessage || defaultMessage
+}
+
+const isLikelyEmail = (value) => (value || '').includes('@')
+
 export const AppProvider = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [currentUser, setCurrentUser] = useState(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    if (isSupabaseConfigured) {
+      return false
+    }
+
+    try {
+      return Boolean(localStorage.getItem(LOCAL_SESSION_KEY))
+    } catch {
+      return false
+    }
+  })
+  const [currentUser, setCurrentUser] = useState(() => {
+    if (isSupabaseConfigured) {
+      return null
+    }
+
+    try {
+      const rawSession = localStorage.getItem(LOCAL_SESSION_KEY)
+      return rawSession ? JSON.parse(rawSession) : null
+    } catch {
+      return null
+    }
+  })
   const [materials, setMaterials] = useState(initialMaterials)
   const [products, setProducts] = useState(initialProducts)
   const [productionLogs, setProductionLogs] = useState([])
+  const [salesLogs, setSalesLogs] = useState([])
+  const [stockPurchases, setStockPurchases] = useState(() => {
+    if (isSupabaseConfigured) {
+      return []
+    }
+
+    try {
+      const rawLogs = localStorage.getItem(LOCAL_STOCK_PURCHASES_KEY)
+      const parsedLogs = rawLogs ? JSON.parse(rawLogs) : []
+      return Array.isArray(parsedLogs) ? parsedLogs : []
+    } catch {
+      return []
+    }
+  })
   const [finishedGoods, setFinishedGoods] = useState([])
+  const [isAuthLoading, setIsAuthLoading] = useState(isSupabaseConfigured)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
-  const [localUsers, setLocalUsers] = useState([])
+  const [localUsers, setLocalUsers] = useState(() => {
+    if (isSupabaseConfigured) {
+      return []
+    }
+
+    try {
+      const rawUsers = localStorage.getItem(LOCAL_USERS_KEY)
+      const parsedUsers = rawUsers ? JSON.parse(rawUsers) : []
+      return Array.isArray(parsedUsers) ? parsedUsers : []
+    } catch {
+      return []
+    }
+  })
+
+  useEffect(() => {
+    if (isSupabaseConfigured) {
+      return
+    }
+
+    try {
+      localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(localUsers))
+    } catch {
+      // Ignore storage write failures in local-only mode
+    }
+  }, [localUsers])
+
+  useEffect(() => {
+    if (isSupabaseConfigured) {
+      return
+    }
+
+    try {
+      if (isAuthenticated && currentUser) {
+        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(currentUser))
+      } else {
+        localStorage.removeItem(LOCAL_SESSION_KEY)
+      }
+    } catch {
+      // Ignore storage write failures in local-only mode
+    }
+  }, [isAuthenticated, currentUser])
+
+  useEffect(() => {
+    if (isSupabaseConfigured) {
+      return
+    }
+
+    try {
+      localStorage.setItem(LOCAL_STOCK_PURCHASES_KEY, JSON.stringify(stockPurchases))
+    } catch {
+      // Ignore storage write failures in local-only mode
+    }
+  }, [stockPurchases])
+
+  const syncAppUserProfile = async (authUser, fallback = {}) => {
+    const metadata = authUser?.user_metadata || {}
+    const firstName = (fallback.firstName || metadata.first_name || '').trim()
+    const lastName = (fallback.lastName || metadata.last_name || '').trim()
+    const country = (fallback.country || metadata.country || '').trim()
+    const derivedName = `${firstName} ${lastName}`.trim() || authUser.email
+
+    const payload = {
+      auth_user_id: authUser.id,
+      first_name: firstName || null,
+      last_name: lastName || null,
+      name: derivedName,
+      email: authUser.email,
+      country: country || null,
+    }
+
+    const { data, error } = await supabase
+      .from('app_users')
+      .upsert(payload, { onConflict: 'auth_user_id' })
+      .select('id, auth_user_id, first_name, last_name, name, email, country')
+      .single()
+
+    if (error) {
+      console.error('Failed to sync app user profile:', error)
+      return {
+        id: authUser.id,
+        firstName,
+        lastName,
+        name: derivedName,
+        email: authUser.email || '',
+        country,
+      }
+    }
+
+    return mapAppUserRecord(data)
+  }
+
+  const hydrateAuthUser = async (authUser) => {
+    if (!authUser) {
+      setCurrentUser(null)
+      setIsAuthenticated(false)
+      return
+    }
+
+    const profile = await syncAppUserProfile(authUser)
+    setCurrentUser(profile)
+    setIsAuthenticated(true)
+  }
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setIsAuthLoading(false)
+      return
+    }
+
+    let isMounted = true
+
+    const initializeAuth = async () => {
+      const { data, error } = await supabase.auth.getSession()
+
+      if (error) {
+        console.error('Failed to get Supabase auth session:', error)
+      }
+
+      if (!isMounted) {
+        return
+      }
+
+      const authUser = data?.session?.user || null
+      await hydrateAuthUser(authUser)
+      setIsAuthLoading(false)
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!isMounted) {
+        return
+      }
+
+      await hydrateAuthUser(session?.user || null)
+      setIsAuthLoading(false)
+    })
+
+    initializeAuth()
+
+    return () => {
+      isMounted = false
+      subscription.unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     const fetchAllData = async () => {
@@ -57,27 +296,42 @@ export const AppProvider = ({ children }) => {
         return
       }
 
+      if (!isAuthenticated) {
+        setMaterials(initialMaterials)
+        setProducts(initialProducts)
+        setFinishedGoods([])
+        setProductionLogs([])
+        setSalesLogs([])
+        setIsBootstrapping(false)
+        return
+      }
+
+      setIsBootstrapping(true)
+
       const loadFromSupabase = async () => {
-        const [materialsResult, productsResult, logsResult, finishedGoodsResult] = await Promise.all([
+        const [materialsResult, productsResult, logsResult, finishedGoodsResult, salesResult] = await Promise.all([
           supabase.from('materials').select('*').order('id', { ascending: true }),
           supabase
             .from('products')
-            .select('id, product_name, product_ingredients(material_name, amount_per_unit)')
+            .select('id, product_name, unit_price, unit_currency, product_ingredients(material_name, amount_per_unit)')
             .order('id', { ascending: true }),
           supabase.from('production_logs').select('*').order('created_at', { ascending: false }),
           supabase.from('finished_goods').select('*').order('product_name', { ascending: true }),
+          supabase.from('sales').select('*').order('created_at', { ascending: false }),
         ])
 
         if (materialsResult.error) throw materialsResult.error
         if (productsResult.error) throw productsResult.error
         if (logsResult.error) throw logsResult.error
         if (finishedGoodsResult.error) throw finishedGoodsResult.error
+        if (salesResult.error) throw salesResult.error
 
         return {
           materialsData: materialsResult.data || [],
           productsData: productsResult.data || [],
           logsData: logsResult.data || [],
           finishedGoodsData: finishedGoodsResult.data || [],
+          salesData: salesResult.data || [],
         }
       }
 
@@ -88,6 +342,9 @@ export const AppProvider = ({ children }) => {
             quantity: material.quantity,
             unit: material.unit,
             low_stock_threshold: material.lowStockThreshold,
+            cost_price: material.costPrice,
+            cost_currency: material.costCurrency,
+            purchase_date: material.purchaseDate,
           })),
           { onConflict: 'name' }
         )
@@ -105,7 +362,13 @@ export const AppProvider = ({ children }) => {
         if (!breadId) {
           const { data: insertedProduct, error: insertProductError } = await supabase
             .from('products')
-            .insert([{ product_name: initialProducts[0].productName }])
+            .insert([
+              {
+                product_name: initialProducts[0].productName,
+                unit_currency: initialProducts[0].unitCurrency,
+                unit_price: initialProducts[0].unitPrice,
+              },
+            ])
             .select('id')
             .single()
 
@@ -154,6 +417,7 @@ export const AppProvider = ({ children }) => {
             createdAt: log.created_at,
           }))
         )
+        setSalesLogs(allData.salesData.map(mapSalesRecord))
       } catch (error) {
         console.error('Supabase bootstrap failed:', error)
       } finally {
@@ -162,56 +426,44 @@ export const AppProvider = ({ children }) => {
     }
 
     fetchAllData()
-  }, [])
+  }, [isAuthenticated])
 
   const signup = async ({ firstName, lastName, email, password, country, confirmPassword }) => {
     const normalizedFirstName = firstName?.trim()
     const normalizedLastName = lastName?.trim()
     const normalizedEmail = email?.trim().toLowerCase()
     const normalizedPassword = password?.trim()
-    const normalizedConfirmPassword = (confirmPassword ?? password)?.trim()
     const normalizedCountry = country?.trim()
-    const fullName = `${normalizedFirstName || ''} ${normalizedLastName || ''}`.trim()
+    const derivedName = `${normalizedFirstName || ''} ${normalizedLastName || ''}`
+      .trim()
+      .replace(/\s+/g, ' ')
+    const fullName = derivedName || normalizedEmail?.split('@')?.[0] || 'User'
 
-    if (
-      !normalizedFirstName ||
-      !normalizedLastName ||
-      !normalizedEmail ||
-      !normalizedPassword ||
-      !normalizedCountry
-    ) {
+    if (!normalizedEmail || !normalizedPassword) {
       return {
         ok: false,
-        message: 'Please complete first name, last name, email, password, and country.',
+        message: 'Please enter email and password.',
       }
-    }
-
-    if (normalizedPassword.length < 6) {
-      return { ok: false, message: 'Password must be at least 6 characters.' }
-    }
-
-    if (normalizedPassword !== normalizedConfirmPassword) {
-      return { ok: false, message: 'Passwords do not match.' }
     }
 
     if (!isSupabaseConfigured) {
       const existingLocalUser = localUsers.find(
-        (user) => user.name.toLowerCase() === fullName.toLowerCase()
+        (user) => user.email.toLowerCase() === normalizedEmail
       )
 
       if (existingLocalUser) {
-        return { ok: false, message: 'This name is already registered. Please login instead.' }
+        return { ok: false, message: 'This email is already registered. Please login instead.' }
       }
 
       setLocalUsers((prevUsers) => [
         ...prevUsers,
         {
           id: Date.now(),
-          firstName: normalizedFirstName,
-          lastName: normalizedLastName,
+          firstName: normalizedFirstName || '',
+          lastName: normalizedLastName || '',
           name: fullName,
           email: normalizedEmail,
-          country: normalizedCountry,
+          country: normalizedCountry || '',
           password: normalizedPassword,
         },
       ])
@@ -219,56 +471,84 @@ export const AppProvider = ({ children }) => {
       return { ok: true, message: 'Sign up successful. Please login with your name and password.' }
     }
 
-    const { data: existingUsers, error: lookupError } = await supabase
-      .from('app_users')
-      .select('id, name')
-      .eq('name', fullName)
-      .limit(1)
-
-    if (lookupError) {
-      return { ok: false, message: 'Unable to sign up right now. Please try again.' }
-    }
-
-    if (existingUsers?.length) {
-      return { ok: false, message: 'This name is already registered. Please login instead.' }
-    }
-
-    const { error: insertError } = await supabase
-      .from('app_users')
-      .insert([
-        {
-          first_name: normalizedFirstName,
-          last_name: normalizedLastName,
-          name: fullName,
-          email: normalizedEmail,
-          country: normalizedCountry,
-          password: normalizedPassword,
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password: normalizedPassword,
+      options: {
+        data: {
+          first_name: normalizedFirstName || null,
+          last_name: normalizedLastName || null,
+          country: normalizedCountry || null,
+          full_name: fullName,
         },
-      ])
+      },
+    })
 
-    if (insertError) {
+    if (signUpError) {
+      const normalizedSignUpError = (signUpError.message || '').toLowerCase()
+
+      if (normalizedSignUpError.includes('email rate limit exceeded')) {
+        const { data: existingSignInData, error: existingSignInError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password: normalizedPassword,
+        })
+
+        if (!existingSignInError && existingSignInData?.user) {
+          await hydrateAuthUser(existingSignInData.user)
+          return { ok: true, message: 'Account already exists. You are now logged in.' }
+        }
+      }
+
+      if (normalizedSignUpError.includes('user already registered')) {
+        const { data: existingSignInData, error: existingSignInError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password: normalizedPassword,
+        })
+
+        if (!existingSignInError && existingSignInData?.user) {
+          await hydrateAuthUser(existingSignInData.user)
+          return { ok: true, message: 'Account already exists. You are now logged in.' }
+        }
+      }
+
       return {
         ok: false,
-        message:
-          'Sign up needs the updated app_users schema (first_name, last_name, country, password columns).',
+        message: getReadableAuthError(signUpError.message, 'Unable to create account right now.'),
       }
     }
 
-    return { ok: true, message: 'Sign up successful. Please login with your name and password.' }
+    if (signUpData?.user && signUpData?.session) {
+      await syncAppUserProfile(signUpData.user, {
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        country: normalizedCountry,
+      })
+    }
+
+    if (signUpData?.session) {
+      return { ok: true, message: 'Sign up successful. You are now logged in.' }
+    }
+
+    return {
+      ok: true,
+      message: 'Sign up successful. Check your email to verify, then login with your name and password.',
+    }
   }
 
   const login = async ({ name, password }) => {
-    const normalizedName = name?.trim()
+    const normalizedIdentifier = name?.trim().replace(/\s+/g, ' ')
     const normalizedPassword = password?.trim()
 
-    if (!normalizedName || !normalizedPassword) {
+    if (!normalizedIdentifier || !normalizedPassword) {
       return { ok: false, message: 'Please enter both name and password.' }
     }
 
     if (!isSupabaseConfigured) {
       const userRecord = localUsers.find(
         (user) =>
-          user.name.toLowerCase() === normalizedName.toLowerCase() &&
+          (isLikelyEmail(normalizedIdentifier)
+            ? user.email.toLowerCase() === normalizedIdentifier.toLowerCase()
+            : user.name.toLowerCase() === normalizedIdentifier.toLowerCase()) &&
           user.password === normalizedPassword
       )
 
@@ -288,41 +568,76 @@ export const AppProvider = ({ children }) => {
       return { ok: true, message: `Welcome, ${userRecord.firstName}.` }
     }
 
-    const { data: usersWithExtendedSchema, error: extendedLookupError } = await supabase
-      .from('app_users')
-      .select('id, first_name, last_name, name, email, country, password')
-      .eq('name', normalizedName)
-      .limit(1)
+    let matchedEmail = null
 
-    if (extendedLookupError) {
+    if (isLikelyEmail(normalizedIdentifier)) {
+      matchedEmail = normalizedIdentifier.toLowerCase()
+    } else {
+      const { data: matchedProfile, error: profileLookupError } = await supabase
+        .from('app_users')
+        .select('email, name')
+        .ilike('name', normalizedIdentifier)
+        .limit(1)
+        .maybeSingle()
+
+      if (profileLookupError) {
+        return { ok: false, message: 'Could not find account by name. Please try again.' }
+      }
+
+      if (!matchedProfile?.email) {
+        return {
+          ok: false,
+          message:
+            'No profile found for this full name yet. Login once with your email and password to initialize your profile, then name login will work.',
+        }
+      }
+
+      matchedEmail = matchedProfile.email
+    }
+
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: matchedEmail,
+      password: normalizedPassword,
+    })
+
+    if (signInError) {
+      const normalizedAuthError = (signInError.message || '').toLowerCase()
+      if (normalizedAuthError.includes('invalid login credentials')) {
+        return { ok: false, message: 'Invalid name or password.' }
+      }
+
       return {
         ok: false,
-        message: 'Password login requires the updated app_users schema with a password column.',
+        message: getReadableAuthError(signInError.message, 'Invalid name or password.'),
       }
     }
 
-    const userRecord = usersWithExtendedSchema?.[0] || null
-
-    if (!userRecord || userRecord.password !== normalizedPassword) {
-      return { ok: false, message: 'Invalid name or password.' }
+    if (signInData?.user) {
+      await hydrateAuthUser(signInData.user)
+      return {
+        ok: true,
+        message: `Welcome, ${signInData.user.user_metadata?.first_name || signInData.user.email}.`,
+      }
     }
 
-    setCurrentUser({
-      id: userRecord.id,
-      firstName: userRecord.first_name || userRecord.name,
-      lastName: userRecord.last_name || '',
-      name: userRecord.name,
-      email: userRecord.email,
-      country: userRecord.country || '',
-    })
-    setIsAuthenticated(true)
-
-    return { ok: true, message: `Welcome, ${userRecord.name}.` }
+    return { ok: false, message: 'Unable to login right now. Please try again.' }
   }
 
-  const logout = () => {
+  const logout = async () => {
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut()
+    }
+
     setIsAuthenticated(false)
     setCurrentUser(null)
+
+    if (!isSupabaseConfigured) {
+      try {
+        localStorage.removeItem(LOCAL_SESSION_KEY)
+      } catch {
+        // Ignore storage remove failures in local-only mode
+      }
+    }
   }
 
   const addMaterial = async (materialPayload) => {
@@ -332,10 +647,22 @@ export const AppProvider = ({ children }) => {
     }
 
     const quantity = Number(materialPayload.quantity)
+    const costPrice = Number(materialPayload.costPrice || 0)
+    const costCurrency = (materialPayload.costCurrency || 'USD').trim().toUpperCase()
     const lowStockThreshold = Number(materialPayload.lowStockThreshold || LOW_STOCK_THRESHOLD)
+    const selectedPurchaseDate = materialPayload.purchaseDate?.trim() || new Date().toISOString().slice(0, 10)
+    const purchaseTimestamp = new Date(`${selectedPurchaseDate}T12:00:00`).toISOString()
 
     if (Number.isNaN(quantity) || quantity <= 0) {
       return { ok: false, message: 'Quantity must be greater than zero.' }
+    }
+
+    if (Number.isNaN(costPrice) || costPrice < 0) {
+      return { ok: false, message: 'Cost price must be zero or greater.' }
+    }
+
+    if (!VALID_CURRENCIES.has(costCurrency)) {
+      return { ok: false, message: 'Please choose a valid material cost currency.' }
     }
 
     const existingMaterial = materials.find(
@@ -348,7 +675,12 @@ export const AppProvider = ({ children }) => {
       if (isSupabaseConfigured) {
         const { error } = await supabase
           .from('materials')
-          .update({ quantity: updatedQuantity })
+          .update({
+            quantity: updatedQuantity,
+            cost_price: costPrice,
+            cost_currency: costCurrency,
+            purchase_date: selectedPurchaseDate,
+          })
           .eq('id', existingMaterial.id)
 
         if (error) {
@@ -359,10 +691,28 @@ export const AppProvider = ({ children }) => {
       setMaterials((prevMaterials) =>
         prevMaterials.map((material) =>
           material.id === existingMaterial.id
-            ? { ...material, quantity: updatedQuantity }
+            ? {
+                ...material,
+                quantity: updatedQuantity,
+                costPrice,
+                costCurrency,
+                purchaseDate: selectedPurchaseDate,
+              }
             : material
         )
       )
+      setStockPurchases((prevLogs) => [
+        {
+          id: Date.now(),
+          materialId: existingMaterial.id,
+          materialName: existingMaterial.name,
+          quantityPurchased: quantity,
+          unit: existingMaterial.unit,
+          purchaseDate: selectedPurchaseDate,
+          createdAt: purchaseTimestamp,
+        },
+        ...prevLogs,
+      ])
       return { ok: true, message: `${name} updated successfully.` }
     }
 
@@ -380,6 +730,9 @@ export const AppProvider = ({ children }) => {
             quantity,
             unit,
             low_stock_threshold: normalizedThreshold,
+            cost_price: costPrice,
+            cost_currency: costCurrency,
+            purchase_date: selectedPurchaseDate,
           },
         ])
         .select('*')
@@ -390,6 +743,18 @@ export const AppProvider = ({ children }) => {
       }
 
       setMaterials((prevMaterials) => [...prevMaterials, mapMaterialRecord(data)])
+      setStockPurchases((prevLogs) => [
+        {
+          id: Date.now(),
+          materialId: Number(data.id),
+          materialName: data.name,
+          quantityPurchased: Number(data.quantity),
+          unit: data.unit,
+          purchaseDate: selectedPurchaseDate,
+          createdAt: purchaseTimestamp,
+        },
+        ...prevLogs,
+      ])
       return { ok: true, message: `${name} added to stock.` }
     }
 
@@ -401,7 +766,22 @@ export const AppProvider = ({ children }) => {
         quantity,
         unit,
         lowStockThreshold: normalizedThreshold,
+        costPrice,
+        costCurrency,
+        purchaseDate: selectedPurchaseDate,
       },
+    ])
+    setStockPurchases((prevLogs) => [
+      {
+        id: Date.now(),
+        materialId: null,
+        materialName: name,
+        quantityPurchased: quantity,
+        unit,
+        purchaseDate: selectedPurchaseDate,
+        createdAt: purchaseTimestamp,
+      },
+      ...prevLogs,
     ])
     return { ok: true, message: `${name} added to stock.` }
   }
@@ -420,7 +800,10 @@ export const AppProvider = ({ children }) => {
     const name = materialPayload.name.trim()
     const unit = materialPayload.unit.trim() || 'unit'
     const quantity = Number(materialPayload.quantity)
+    const costPrice = Number(materialPayload.costPrice || 0)
+    const costCurrency = (materialPayload.costCurrency || 'USD').trim().toUpperCase()
     const lowStockThreshold = Number(materialPayload.lowStockThreshold)
+    const selectedPurchaseDate = materialPayload.purchaseDate?.trim() || DEFAULT_PURCHASE_DATE
 
     if (!name) {
       return { ok: false, message: 'Material name is required.' }
@@ -432,6 +815,14 @@ export const AppProvider = ({ children }) => {
 
     if (Number.isNaN(lowStockThreshold) || lowStockThreshold < 0) {
       return { ok: false, message: 'Low stock threshold must be zero or greater.' }
+    }
+
+    if (Number.isNaN(costPrice) || costPrice < 0) {
+      return { ok: false, message: 'Cost price must be zero or greater.' }
+    }
+
+    if (!VALID_CURRENCIES.has(costCurrency)) {
+      return { ok: false, message: 'Please choose a valid material cost currency.' }
     }
 
     const duplicateName = materials.find(
@@ -451,6 +842,9 @@ export const AppProvider = ({ children }) => {
           unit,
           quantity,
           low_stock_threshold: lowStockThreshold,
+          cost_price: costPrice,
+          cost_currency: costCurrency,
+          purchase_date: selectedPurchaseDate,
         })
         .eq('id', parsedMaterialId)
 
@@ -479,6 +873,9 @@ export const AppProvider = ({ children }) => {
               unit,
               quantity,
               lowStockThreshold,
+              costPrice,
+              costCurrency,
+              purchaseDate: selectedPurchaseDate,
             }
           : material
       )
@@ -523,10 +920,21 @@ export const AppProvider = ({ children }) => {
     return { ok: true, message: `${materialToDelete.name} deleted.` }
   }
 
-  const configureProduct = async ({ productId, productName, ingredients }) => {
+  const configureProduct = async ({ productId, productName, unitCurrency, unitPrice, ingredients }) => {
     const name = productName.trim()
     if (!name) {
       return { ok: false, message: 'Product name is required.' }
+    }
+
+    const currency = (unitCurrency || '').trim().toUpperCase()
+    const validCurrencies = new Set(['FCFA', 'USD', 'NGN'])
+    if (!validCurrencies.has(currency)) {
+      return { ok: false, message: 'Please choose a valid unit price currency.' }
+    }
+
+    const parsedUnitPrice = Number(unitPrice)
+    if (Number.isNaN(parsedUnitPrice) || parsedUnitPrice < 0) {
+      return { ok: false, message: 'Unit price must be a valid number.' }
     }
 
     const validIngredients = ingredients
@@ -567,7 +975,7 @@ export const AppProvider = ({ children }) => {
       if (isSupabaseConfigured) {
         const { error: updateError } = await supabase
           .from('products')
-          .update({ product_name: name })
+          .update({ product_name: name, unit_currency: currency, unit_price: parsedUnitPrice })
           .eq('id', existingProduct.id)
 
         if (updateError) {
@@ -599,7 +1007,13 @@ export const AppProvider = ({ children }) => {
       setProducts((prevProducts) =>
         prevProducts.map((product) =>
           product.id === existingProduct.id
-            ? { ...product, productName: name, ingredients: validIngredients }
+            ? {
+                ...product,
+                productName: name,
+                unitCurrency: currency,
+                unitPrice: parsedUnitPrice,
+                ingredients: validIngredients,
+              }
             : product
         )
       )
@@ -609,8 +1023,8 @@ export const AppProvider = ({ children }) => {
     if (isSupabaseConfigured) {
       const { data: insertedProduct, error: insertProductError } = await supabase
         .from('products')
-        .insert([{ product_name: name }])
-        .select('id, product_name')
+        .insert([{ product_name: name, unit_currency: currency, unit_price: parsedUnitPrice }])
+        .select('id, product_name, unit_currency, unit_price')
         .single()
 
       if (insertProductError) {
@@ -634,6 +1048,8 @@ export const AppProvider = ({ children }) => {
         {
           id: Number(insertedProduct.id),
           productName: insertedProduct.product_name,
+          unitCurrency: insertedProduct.unit_currency || 'USD',
+          unitPrice: Number(insertedProduct.unit_price || 0),
           ingredients: validIngredients,
         },
       ])
@@ -646,6 +1062,8 @@ export const AppProvider = ({ children }) => {
       {
         id: Date.now(),
         productName: name,
+        unitCurrency: currency,
+        unitPrice: parsedUnitPrice,
         ingredients: validIngredients,
       },
     ])
@@ -689,9 +1107,11 @@ export const AppProvider = ({ children }) => {
     return { ok: true, message: `${productToDelete.productName} deleted.` }
   }
 
-  const recordProduction = async ({ productId, quantity }) => {
+  const recordProduction = async ({ productId, quantity, productionDate }) => {
     const parsedProductId = Number(productId)
     const parsedQuantity = Number(quantity)
+    const selectedProductionDate = productionDate?.trim() || new Date().toISOString().slice(0, 10)
+    const productionTimestamp = new Date(`${selectedProductionDate}T12:00:00`).toISOString()
 
     if (Number.isNaN(parsedProductId)) {
       return { ok: false, message: 'Select a product.' }
@@ -777,6 +1197,7 @@ export const AppProvider = ({ children }) => {
             product_name: selectedProduct.productName,
             quantity: parsedQuantity,
             material_summary: productionMaterialSummary.map(({ materialId, ...rest }) => rest),
+            created_at: productionTimestamp,
           },
         ])
         .select('*')
@@ -826,7 +1247,7 @@ export const AppProvider = ({ children }) => {
           productName: selectedProduct.productName,
           quantity: parsedQuantity,
           materialSummary: productionMaterialSummary.map(({ materialId, ...rest }) => rest),
-          createdAt: new Date().toISOString(),
+          createdAt: productionTimestamp,
         },
         ...prevLogs,
       ])
@@ -878,6 +1299,121 @@ export const AppProvider = ({ children }) => {
     }
   }
 
+  const recordSale = async ({ productId, quantitySold, saleDate, unitPrice }) => {
+    const parsedProductId = Number(productId)
+    const parsedQuantitySold = Number(quantitySold)
+    const parsedUnitPrice = Number(unitPrice)
+    const selectedSaleDate = saleDate?.trim() || new Date().toISOString().slice(0, 10)
+    const saleTimestamp = new Date(`${selectedSaleDate}T12:00:00`).toISOString()
+
+    if (Number.isNaN(parsedProductId)) {
+      return { ok: false, message: 'Select a product.' }
+    }
+
+    if (Number.isNaN(parsedQuantitySold) || parsedQuantitySold <= 0) {
+      return { ok: false, message: 'Quantity sold must be greater than zero.' }
+    }
+
+    if (Number.isNaN(parsedUnitPrice) || parsedUnitPrice < 0) {
+      return { ok: false, message: 'Unit price must be zero or greater.' }
+    }
+
+    const selectedProduct = products.find((product) => product.id === parsedProductId)
+    if (!selectedProduct) {
+      return { ok: false, message: 'Selected product was not found.' }
+    }
+
+    const stockEntry = finishedGoods.find((item) => item.productId === parsedProductId)
+    const availableQuantity = Number(stockEntry?.quantity || 0)
+
+    if (availableQuantity <= 0) {
+      return { ok: false, message: 'Insufficient stock to complete sale.' }
+    }
+
+    if (parsedQuantitySold > availableQuantity) {
+      return {
+        ok: false,
+        message: `Insufficient stock to complete sale. Available quantity is ${availableQuantity}.`,
+      }
+    }
+
+    const updatedQuantityLeft = Number((availableQuantity - parsedQuantitySold).toFixed(2))
+    const totalAmount = Number((parsedQuantitySold * parsedUnitPrice).toFixed(2))
+
+    if (isSupabaseConfigured) {
+      const { error: finishedGoodsError } = await supabase
+        .from('finished_goods')
+        .update({ quantity: updatedQuantityLeft })
+        .eq('product_id', parsedProductId)
+
+      if (finishedGoodsError) {
+        return { ok: false, message: 'Could not update finished goods quantity in backend.' }
+      }
+
+      const { data: insertedSale, error: insertSaleError } = await supabase
+        .from('sales')
+        .insert([
+          {
+            product_id: parsedProductId,
+            product_name: selectedProduct.productName,
+            quantity_sold: parsedQuantitySold,
+            unit_currency: selectedProduct.unitCurrency || 'USD',
+            unit_price: parsedUnitPrice,
+            total_amount: totalAmount,
+            quantity_left: updatedQuantityLeft,
+            sale_date: selectedSaleDate,
+            created_at: saleTimestamp,
+          },
+        ])
+        .select('*')
+        .single()
+
+      if (insertSaleError) {
+        return { ok: false, message: 'Could not record sale in backend.' }
+      }
+
+      setSalesLogs((prevSales) => [mapSalesRecord(insertedSale), ...prevSales])
+    } else {
+      setSalesLogs((prevSales) => [
+        {
+          id: Date.now(),
+          productId: parsedProductId,
+          productName: selectedProduct.productName,
+          quantitySold: parsedQuantitySold,
+          unitCurrency: selectedProduct.unitCurrency || 'USD',
+          unitPrice: parsedUnitPrice,
+          totalAmount,
+          quantityLeft: updatedQuantityLeft,
+          saleDate: selectedSaleDate,
+          createdAt: saleTimestamp,
+        },
+        ...prevSales,
+      ])
+    }
+
+    setFinishedGoods((prevGoods) =>
+      prevGoods.map((good) =>
+        good.productId === parsedProductId
+          ? {
+              ...good,
+              quantity: updatedQuantityLeft,
+            }
+          : good
+      )
+    )
+
+    return {
+      ok: true,
+      message: `${parsedQuantitySold} unit(s) of ${selectedProduct.productName} sold successfully.`,
+      summary: {
+        productName: selectedProduct.productName,
+        quantitySold: parsedQuantitySold,
+        quantityLeft: updatedQuantityLeft,
+        totalAmount,
+      },
+    }
+  }
+
   const lowStockMaterials = useMemo(
     () =>
       materials.filter((material) => material.quantity <= (material.lowStockThreshold || LOW_STOCK_THRESHOLD)),
@@ -887,9 +1423,12 @@ export const AppProvider = ({ children }) => {
   const totalRawMaterials = materials.length
   const totalFinishedGoods = finishedGoods.reduce((sum, item) => sum + item.quantity, 0)
   const totalProductionRuns = productionLogs.length
+  const totalSalesAmount = salesLogs.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0)
 
   const value = {
+    isSupabaseConfigured,
     isAuthenticated,
+    isAuthLoading,
     currentUser,
     isBootstrapping,
     signup,
@@ -898,17 +1437,21 @@ export const AppProvider = ({ children }) => {
     materials,
     products,
     productionLogs,
+    salesLogs,
+    stockPurchases,
     finishedGoods,
     lowStockMaterials,
     totalRawMaterials,
     totalFinishedGoods,
     totalProductionRuns,
+    totalSalesAmount,
     addMaterial,
     updateMaterial,
     deleteMaterial,
     configureProduct,
     deleteProduct,
     recordProduction,
+    recordSale,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

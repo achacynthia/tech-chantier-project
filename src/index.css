@@ -405,6 +405,11 @@ select {
     color: var(--text);
 }
 
+[data-theme='dark'] input,
+[data-theme='dark'] select {
+    color: #000;
+}
+
 .password-input-wrap {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -426,6 +431,12 @@ select:focus {
 .recipe-row {
     display: grid;
     grid-template-columns: 1.5fr 1fr auto;
+    gap: 0.45rem;
+}
+
+.price-currency-row {
+    display: grid;
+    grid-template-columns: 1fr 170px;
     gap: 0.45rem;
 }
 
@@ -469,6 +480,135 @@ select:focus {
 .compact-actions button {
     padding: 0.4rem 0.7rem;
     font-size: 0.85rem;
+}
+
+.report-filter-card {
+    padding: 1.2rem 1.25rem;
+    border-radius: 14px;
+}
+
+.report-filter-head {
+    display: grid;
+    gap: 0.35rem;
+    margin-bottom: 0.8rem;
+}
+
+.report-filter-title {
+    margin-bottom: 0;
+    letter-spacing: 0.2px;
+}
+
+.report-filter-subtitle {
+    max-width: 72ch;
+    line-height: 1.45;
+}
+
+.report-filter-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-soft);
+}
+
+.report-filter-controls select,
+.report-filter-controls button {
+    min-height: 38px;
+}
+
+.report-filter-controls select {
+    min-width: 140px;
+    background: var(--surface);
+}
+
+.report-filter-controls .button-secondary {
+    margin-left: auto;
+}
+
+.report-toolbar {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.9rem;
+    align-items: flex-start;
+}
+
+.report-download-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.report-download-controls select {
+    min-width: 130px;
+    background: var(--surface);
+}
+
+.report-section-toggle-row {
+    margin-top: 0.7rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+}
+
+.report-section-toggle-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.9rem;
+}
+
+.report-section-toggle-row input[type='checkbox'] {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    padding: 0;
+    border-radius: 4px;
+}
+
+.report-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.8rem;
+    margin-bottom: 0.65rem;
+}
+
+.report-section-head h2 {
+    margin-bottom: 0;
+}
+
+.report-pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.report-pagination-controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.report-pagination-controls select {
+    min-width: 72px;
+}
+
+.report-pagination-controls button {
+    padding: 0.35rem 0.65rem;
+    font-size: 0.84rem;
+}
+
+.report-pagination-controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .table-wrapper {
@@ -584,6 +724,10 @@ a.active {
         grid-template-columns: 1fr;
     }
 
+    .price-currency-row {
+        grid-template-columns: 1fr;
+    }
+
     .nav-bar {
         align-items: flex-start;
     }
@@ -591,5 +735,49 @@ a.active {
     .recipe-card-header {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .report-filter-controls {
+        align-items: stretch;
+    }
+
+    .report-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .report-download-controls {
+        width: 100%;
+    }
+
+    .report-download-controls select,
+    .report-download-controls .button-secondary {
+        width: 100%;
+    }
+
+    .report-section-head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .report-pagination-controls {
+        width: 100%;
+        align-items: stretch;
+    }
+
+    .report-pagination-controls label,
+    .report-pagination-controls select,
+    .report-pagination-controls .button-secondary {
+        width: 100%;
+    }
+
+    .report-filter-controls select,
+    .report-filter-controls .button-secondary {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .report-filter-controls .button-secondary {
+        margin-left: 0;
     }
 }

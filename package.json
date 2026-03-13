@@ -15,6 +15,9 @@
   "license": "ISC",
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
+    "docx": "^9.6.1",
+    "jspdf": "^4.2.0",
+    "jspdf-autotable": "^5.0.7",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router-dom": "^7.12.0"
