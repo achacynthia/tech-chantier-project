@@ -1,5 +1,42 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { isSupabaseConfigured, supabase } from '../lib/supabaseClient'
+
+const isBackendConfigured = false
+const backendClient = null
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
+
+const buildApiBaseCandidates = (baseUrl) => {
+  if (!baseUrl) {
+    return []
+  }
+
+  try {
+    const parsed = new URL(baseUrl)
+    const isLocalHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+
+    if (!isLocalHost || !parsed.port) {
+      return [baseUrl]
+    }
+
+    const startPort = Number(parsed.port)
+    if (Number.isNaN(startPort)) {
+      return [baseUrl]
+    }
+
+    const candidates = []
+    for (let offset = 0; offset < 6; offset += 1) {
+      parsed.port = String(startPort + offset)
+      candidates.push(parsed.toString().replace(/\/$/, ''))
+    }
+
+    return candidates
+  } catch {
+    return [baseUrl]
+  }
+}
+
+const API_BASE_CANDIDATES = buildApiBaseCandidates(API_BASE_URL)
+const hasNodeApi = API_BASE_CANDIDATES.length > 0
+let activeApiBaseUrl = API_BASE_CANDIDATES[0] || ''
 
 const AppContext = createContext(null)  // Create the context with a default value of null
 
@@ -99,9 +136,57 @@ const getReadableAuthError = (errorMessage, defaultMessage) => {
 
 const isLikelyEmail = (value) => (value || '').includes('@')
 
+const apiRequest = async (path, options = {}) => {
+  if (!hasNodeApi) {
+    throw new Error('Node API is not configured.')
+  }
+
+  const prioritizedBases = [
+    activeApiBaseUrl,
+    ...API_BASE_CANDIDATES.filter((candidate) => candidate !== activeApiBaseUrl),
+  ]
+
+  let lastNetworkError = null
+
+  for (const baseUrl of prioritizedBases) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+        ...options,
+      })
+
+      const payload = await response.json().catch(() => ({}))
+
+      if (!response.ok || payload?.ok === false) {
+        const requestError = new Error(payload?.message || `Request failed: ${response.status}`)
+        requestError.isHttpError = true
+        throw requestError
+      }
+
+      if (activeApiBaseUrl !== baseUrl) {
+        activeApiBaseUrl = baseUrl
+        console.info(`Node API switched to ${activeApiBaseUrl}`)
+      }
+
+      return payload
+    } catch (error) {
+      if (error?.isHttpError) {
+        throw error
+      }
+
+      lastNetworkError = error
+    }
+  }
+
+  throw lastNetworkError || new Error('Unable to reach Node API.')
+}
+
 export const AppProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return false
     }
 
@@ -112,7 +197,7 @@ export const AppProvider = ({ children }) => {
     }
   })
   const [currentUser, setCurrentUser] = useState(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return null
     }
 
@@ -128,7 +213,7 @@ export const AppProvider = ({ children }) => {
   const [productionLogs, setProductionLogs] = useState([])
   const [salesLogs, setSalesLogs] = useState([])
   const [stockPurchases, setStockPurchases] = useState(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return []
     }
 
@@ -141,10 +226,10 @@ export const AppProvider = ({ children }) => {
     }
   })
   const [finishedGoods, setFinishedGoods] = useState([])
-  const [isAuthLoading, setIsAuthLoading] = useState(isSupabaseConfigured)
+  const [isAuthLoading, setIsAuthLoading] = useState(isBackendConfigured)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [localUsers, setLocalUsers] = useState(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return []
     }
 
@@ -158,7 +243,7 @@ export const AppProvider = ({ children }) => {
   })
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return
     }
 
@@ -170,7 +255,7 @@ export const AppProvider = ({ children }) => {
   }, [localUsers])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return
     }
 
@@ -186,7 +271,7 @@ export const AppProvider = ({ children }) => {
   }, [isAuthenticated, currentUser])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
+    if (isBackendConfigured) {
       return
     }
 
@@ -213,7 +298,7 @@ export const AppProvider = ({ children }) => {
       country: country || null,
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await backendClient
       .from('app_users')
       .upsert(payload, { onConflict: 'auth_user_id' })
       .select('id, auth_user_id, first_name, last_name, name, email, country')
@@ -247,7 +332,7 @@ export const AppProvider = ({ children }) => {
   }
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!isBackendConfigured) {
       setIsAuthLoading(false)
       return
     }
@@ -255,10 +340,10 @@ export const AppProvider = ({ children }) => {
     let isMounted = true
 
     const initializeAuth = async () => {
-      const { data, error } = await supabase.auth.getSession()
+      const { data, error } = await backendClient.auth.getSession()
 
       if (error) {
-        console.error('Failed to get Supabase auth session:', error)
+        console.error('Failed to get Backend auth session:', error)
       }
 
       if (!isMounted) {
@@ -272,7 +357,7 @@ export const AppProvider = ({ children }) => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = backendClient.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) {
         return
       }
@@ -291,7 +376,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     const fetchAllData = async () => {
-      if (!isSupabaseConfigured) {
+      if (!isBackendConfigured) {
         setIsBootstrapping(false)
         return
       }
@@ -308,16 +393,16 @@ export const AppProvider = ({ children }) => {
 
       setIsBootstrapping(true)
 
-      const loadFromSupabase = async () => {
+      const loadFromBackend = async () => {
         const [materialsResult, productsResult, logsResult, finishedGoodsResult, salesResult] = await Promise.all([
-          supabase.from('materials').select('*').order('id', { ascending: true }),
-          supabase
+          backendClient.from('materials').select('*').order('id', { ascending: true }),
+          backendClient
             .from('products')
             .select('id, product_name, unit_price, unit_currency, product_ingredients(material_name, amount_per_unit)')
             .order('id', { ascending: true }),
-          supabase.from('production_logs').select('*').order('created_at', { ascending: false }),
-          supabase.from('finished_goods').select('*').order('product_name', { ascending: true }),
-          supabase.from('sales').select('*').order('created_at', { ascending: false }),
+          backendClient.from('production_logs').select('*').order('created_at', { ascending: false }),
+          backendClient.from('finished_goods').select('*').order('product_name', { ascending: true }),
+          backendClient.from('sales').select('*').order('created_at', { ascending: false }),
         ])
 
         if (materialsResult.error) throw materialsResult.error
@@ -336,7 +421,7 @@ export const AppProvider = ({ children }) => {
       }
 
       const seedDefaultData = async () => {
-        const { error: materialsSeedError } = await supabase.from('materials').upsert(
+        const { error: materialsSeedError } = await backendClient.from('materials').upsert(
           initialMaterials.map((material) => ({
             name: material.name,
             quantity: material.quantity,
@@ -351,7 +436,7 @@ export const AppProvider = ({ children }) => {
 
         if (materialsSeedError) throw materialsSeedError
 
-        const { data: existingBread } = await supabase
+        const { data: existingBread } = await backendClient
           .from('products')
           .select('id')
           .eq('product_name', initialProducts[0].productName)
@@ -360,7 +445,7 @@ export const AppProvider = ({ children }) => {
         let breadId = existingBread?.id
 
         if (!breadId) {
-          const { data: insertedProduct, error: insertProductError } = await supabase
+          const { data: insertedProduct, error: insertProductError } = await backendClient
             .from('products')
             .insert([
               {
@@ -377,8 +462,8 @@ export const AppProvider = ({ children }) => {
         }
 
         if (breadId) {
-          await supabase.from('product_ingredients').delete().eq('product_id', breadId)
-          const { error: ingredientSeedError } = await supabase.from('product_ingredients').insert(
+          await backendClient.from('product_ingredients').delete().eq('product_id', breadId)
+          const { error: ingredientSeedError } = await backendClient.from('product_ingredients').insert(
             initialProducts[0].ingredients.map((ingredient) => ({
               product_id: breadId,
               material_name: ingredient.materialName,
@@ -391,11 +476,11 @@ export const AppProvider = ({ children }) => {
       }
 
       try {
-        let allData = await loadFromSupabase()
+        let allData = await loadFromBackend()
 
         if (allData.materialsData.length === 0 && allData.productsData.length === 0) {
           await seedDefaultData()
-          allData = await loadFromSupabase()
+          allData = await loadFromBackend()
         }
 
         setMaterials(allData.materialsData.map(mapMaterialRecord))
@@ -419,13 +504,97 @@ export const AppProvider = ({ children }) => {
         )
         setSalesLogs(allData.salesData.map(mapSalesRecord))
       } catch (error) {
-        console.error('Supabase bootstrap failed:', error)
+        console.error('Backend bootstrap failed:', error)
       } finally {
         setIsBootstrapping(false)
       }
     }
 
     fetchAllData()
+  }, [isAuthenticated])
+
+  useEffect(() => {
+    const syncNodeApiData = async () => {
+      if (!hasNodeApi || !isAuthenticated) {
+        return
+      }
+
+      setIsBootstrapping(true)
+
+      try {
+        const [materialsResponse, productsResponse, salesResponse, productionLogsResponse] = await Promise.all([
+          apiRequest('/api/materials'),
+          apiRequest('/api/products'),
+          apiRequest('/api/sales?page=1&pageSize=1000&sortBy=revenue-desc'),
+          apiRequest('/api/production-logs'),
+        ])
+
+        const materialsData = Array.isArray(materialsResponse?.data) ? materialsResponse.data : []
+        const productsData = Array.isArray(productsResponse?.data) ? productsResponse.data : []
+        const salesData = Array.isArray(salesResponse?.data) ? salesResponse.data : []
+        const logsData = Array.isArray(productionLogsResponse?.data)
+          ? productionLogsResponse.data
+          : []
+
+        setMaterials(
+          materialsData.map((material) => ({
+            id: Number(material.id),
+            name: material.name,
+            quantity: Number(material.quantity || 0),
+            unit: material.unit,
+            costPrice: Number(material.costPrice ?? material.cost_price ?? 0),
+            costCurrency: material.costCurrency || material.cost_currency || 'USD',
+            lowStockThreshold: Number(
+              material.lowStockThreshold ?? material.low_stock_threshold ?? LOW_STOCK_THRESHOLD
+            ),
+            purchaseDate:
+              material.purchaseDate || material.purchase_date || DEFAULT_PURCHASE_DATE,
+          }))
+        )
+
+        setProducts(
+          productsData.map((product) => ({
+            id: Number(product.id),
+            productName: product.productName,
+            unitCurrency: product.unitCurrency || 'USD',
+            unitPrice: Number(product.unitPrice || 0),
+            ingredients: Array.isArray(product.ingredients)
+              ? product.ingredients.map((ingredient) => ({
+                  materialName: ingredient.materialName,
+                  amountPerUnit: Number(ingredient.amountPerUnit || 0),
+                }))
+              : [],
+          }))
+        )
+
+        setFinishedGoods(
+          productsData.map((product) => ({
+            productId: Number(product.id),
+            productName: product.productName,
+            quantity: Number(product.quantityLeft || 0),
+          }))
+        )
+
+        setSalesLogs(salesData.map(mapSalesRecord))
+
+        setProductionLogs(
+          logsData.map((log) => ({
+            id: Number(log.id),
+            productId: log.product_id ? Number(log.product_id) : null,
+            productName: log.product_name,
+            quantity: Number(log.quantity || 0),
+            materialSummary: Array.isArray(log.material_summary) ? log.material_summary : [],
+            createdAt: log.created_at,
+          }))
+        )
+      } catch (error) {
+        console.error('Node API sync failed:', error)
+      } finally {
+        setIsBootstrapping(false)
+      }
+    }
+
+    syncNodeApiData()
   }, [isAuthenticated])
 
   const signup = async ({ firstName, lastName, email, password, country, confirmPassword }) => {
@@ -446,7 +615,7 @@ export const AppProvider = ({ children }) => {
       }
     }
 
-    if (!isSupabaseConfigured) {
+    if (!isBackendConfigured) {
       const existingLocalUser = localUsers.find(
         (user) => user.email.toLowerCase() === normalizedEmail
       )
@@ -471,7 +640,7 @@ export const AppProvider = ({ children }) => {
       return { ok: true, message: 'Sign up successful. Please login with your name and password.' }
     }
 
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+    const { data: signUpData, error: signUpError } = await backendClient.auth.signUp({
       email: normalizedEmail,
       password: normalizedPassword,
       options: {
@@ -488,7 +657,7 @@ export const AppProvider = ({ children }) => {
       const normalizedSignUpError = (signUpError.message || '').toLowerCase()
 
       if (normalizedSignUpError.includes('email rate limit exceeded')) {
-        const { data: existingSignInData, error: existingSignInError } = await supabase.auth.signInWithPassword({
+        const { data: existingSignInData, error: existingSignInError } = await backendClient.auth.signInWithPassword({
           email: normalizedEmail,
           password: normalizedPassword,
         })
@@ -500,7 +669,7 @@ export const AppProvider = ({ children }) => {
       }
 
       if (normalizedSignUpError.includes('user already registered')) {
-        const { data: existingSignInData, error: existingSignInError } = await supabase.auth.signInWithPassword({
+        const { data: existingSignInData, error: existingSignInError } = await backendClient.auth.signInWithPassword({
           email: normalizedEmail,
           password: normalizedPassword,
         })
@@ -543,7 +712,7 @@ export const AppProvider = ({ children }) => {
       return { ok: false, message: 'Please enter both name and password.' }
     }
 
-    if (!isSupabaseConfigured) {
+    if (!isBackendConfigured) {
       const userRecord = localUsers.find(
         (user) =>
           (isLikelyEmail(normalizedIdentifier)
@@ -573,7 +742,7 @@ export const AppProvider = ({ children }) => {
     if (isLikelyEmail(normalizedIdentifier)) {
       matchedEmail = normalizedIdentifier.toLowerCase()
     } else {
-      const { data: matchedProfile, error: profileLookupError } = await supabase
+      const { data: matchedProfile, error: profileLookupError } = await backendClient
         .from('app_users')
         .select('email, name')
         .ilike('name', normalizedIdentifier)
@@ -595,7 +764,7 @@ export const AppProvider = ({ children }) => {
       matchedEmail = matchedProfile.email
     }
 
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: signInData, error: signInError } = await backendClient.auth.signInWithPassword({
       email: matchedEmail,
       password: normalizedPassword,
     })
@@ -624,14 +793,14 @@ export const AppProvider = ({ children }) => {
   }
 
   const logout = async () => {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut()
+    if (isBackendConfigured) {
+      await backendClient.auth.signOut()
     }
 
     setIsAuthenticated(false)
     setCurrentUser(null)
 
-    if (!isSupabaseConfigured) {
+    if (!isBackendConfigured) {
       try {
         localStorage.removeItem(LOCAL_SESSION_KEY)
       } catch {
@@ -669,11 +838,73 @@ export const AppProvider = ({ children }) => {
       (material) => material.name.toLowerCase() === name.toLowerCase()
     )
 
+    if (hasNodeApi) {
+      const unit = materialPayload.unit.trim() || 'unit'
+
+      try {
+        const response = await apiRequest('/api/materials', {
+          method: 'POST',
+          body: JSON.stringify({
+            name,
+            quantity,
+            unit,
+            lowStockThreshold,
+            costPrice,
+            costCurrency,
+            purchaseDate: selectedPurchaseDate,
+          }),
+        })
+
+        if (!response.ok || !response.data) {
+          return { ok: false, message: response.message || 'Could not save material in backend.' }
+        }
+
+        const savedMaterial = {
+          id: Number(response.data.id),
+          name: response.data.name,
+          quantity: Number(response.data.quantity || 0),
+          unit: response.data.unit,
+          lowStockThreshold: Number(response.data.low_stock_threshold || LOW_STOCK_THRESHOLD),
+          costPrice: Number(response.data.cost_price || 0),
+          costCurrency: response.data.cost_currency || 'USD',
+          purchaseDate: response.data.purchase_date || selectedPurchaseDate,
+        }
+
+        setMaterials((prevMaterials) => {
+          const index = prevMaterials.findIndex((material) => material.id === savedMaterial.id)
+          if (index === -1) {
+            return [...prevMaterials, savedMaterial]
+          }
+
+          return prevMaterials.map((material) =>
+            material.id === savedMaterial.id ? savedMaterial : material
+          )
+        })
+
+        setStockPurchases((prevLogs) => [
+          {
+            id: Date.now(),
+            materialId: savedMaterial.id,
+            materialName: savedMaterial.name,
+            quantityPurchased: quantity,
+            unit: savedMaterial.unit,
+            purchaseDate: savedMaterial.purchaseDate,
+            createdAt: purchaseTimestamp,
+          },
+          ...prevLogs,
+        ])
+
+        return { ok: true, message: response.message || `${savedMaterial.name} saved.` }
+      } catch (error) {
+        return { ok: false, message: error?.message || 'Could not save material in backend.' }
+      }
+    }
+
     if (existingMaterial) {
       const updatedQuantity = Number((existingMaterial.quantity + quantity).toFixed(2))
 
-      if (isSupabaseConfigured) {
-        const { error } = await supabase
+      if (isBackendConfigured) {
+        const { error } = await backendClient
           .from('materials')
           .update({
             quantity: updatedQuantity,
@@ -721,8 +952,8 @@ export const AppProvider = ({ children }) => {
       ? LOW_STOCK_THRESHOLD
       : lowStockThreshold
 
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase
+    if (isBackendConfigured) {
+      const { data, error } = await backendClient
         .from('materials')
         .insert([
           {
@@ -834,8 +1065,63 @@ export const AppProvider = ({ children }) => {
       return { ok: false, message: 'Another material already uses this name.' }
     }
 
-    if (isSupabaseConfigured) {
-      const { error: updateError } = await supabase
+    if (hasNodeApi) {
+      try {
+        const response = await apiRequest(`/api/materials/${parsedMaterialId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name,
+            unit,
+            quantity,
+            lowStockThreshold,
+            costPrice,
+            costCurrency,
+            purchaseDate: selectedPurchaseDate,
+          }),
+        })
+
+        if (!response.ok || !response.data) {
+          return { ok: false, message: response.message || 'Failed to update material in backend.' }
+        }
+
+        const updatedMaterial = {
+          id: Number(response.data.id),
+          name: response.data.name,
+          quantity: Number(response.data.quantity || 0),
+          unit: response.data.unit,
+          lowStockThreshold: Number(response.data.low_stock_threshold || LOW_STOCK_THRESHOLD),
+          costPrice: Number(response.data.cost_price || 0),
+          costCurrency: response.data.cost_currency || 'USD',
+          purchaseDate: response.data.purchase_date || selectedPurchaseDate,
+        }
+
+        setMaterials((prevMaterials) =>
+          prevMaterials.map((material) =>
+            material.id === parsedMaterialId ? updatedMaterial : material
+          )
+        )
+
+        if (materialToUpdate.name.toLowerCase() !== name.toLowerCase()) {
+          setProducts((prevProducts) =>
+            prevProducts.map((product) => ({
+              ...product,
+              ingredients: product.ingredients.map((ingredient) =>
+                ingredient.materialName.toLowerCase() === materialToUpdate.name.toLowerCase()
+                  ? { ...ingredient, materialName: name }
+                  : ingredient
+              ),
+            }))
+          )
+        }
+
+        return { ok: true, message: response.message || `${name} updated successfully.` }
+      } catch {
+        return { ok: false, message: 'Failed to update material in backend.' }
+      }
+    }
+
+    if (isBackendConfigured) {
+      const { error: updateError } = await backendClient
         .from('materials')
         .update({
           name,
@@ -853,7 +1139,7 @@ export const AppProvider = ({ children }) => {
       }
 
       if (materialToUpdate.name.toLowerCase() !== name.toLowerCase()) {
-        const { error: ingredientRenameError } = await supabase
+        const { error: ingredientRenameError } = await backendClient
           .from('product_ingredients')
           .update({ material_name: name })
           .eq('material_name', materialToUpdate.name)
@@ -908,8 +1194,31 @@ export const AppProvider = ({ children }) => {
       return { ok: false, message: 'Material not found.' }
     }
 
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('materials').delete().eq('id', parsedMaterialId)
+    if (hasNodeApi) {
+      try {
+        const response = await apiRequest(`/api/materials/${parsedMaterialId}`, {
+          method: 'DELETE',
+        })
+
+        if (!response.ok) {
+          return {
+            ok: false,
+            message: response.message || 'Could not delete material from backend.',
+          }
+        }
+
+        setMaterials((prevMaterials) =>
+          prevMaterials.filter((material) => material.id !== parsedMaterialId)
+        )
+
+        return { ok: true, message: response.message || `${materialToDelete.name} deleted.` }
+      } catch {
+        return { ok: false, message: 'Could not delete material from backend.' }
+      }
+    }
+
+    if (isBackendConfigured) {
+      const { error } = await backendClient.from('materials').delete().eq('id', parsedMaterialId)
       if (error) {
         return { ok: false, message: 'Could not delete material from backend.' }
       }
@@ -971,9 +1280,60 @@ export const AppProvider = ({ children }) => {
         : product.id === parsedProductId
     )
 
+    if (hasNodeApi) {
+      try {
+        const response = await apiRequest('/api/products/configure', {
+          method: 'POST',
+          body: JSON.stringify({
+            productId: Number.isNaN(parsedProductId) ? null : parsedProductId,
+            productName: name,
+            unitCurrency: currency,
+            unitPrice: parsedUnitPrice,
+            ingredients: validIngredients,
+          }),
+        })
+
+        if (!response.ok || !response.data) {
+          return { ok: false, message: response.message || 'Could not save product in backend.' }
+        }
+
+        const savedProduct = {
+          id: Number(response.data.id),
+          productName: response.data.productName,
+          unitCurrency: response.data.unitCurrency || 'USD',
+          unitPrice: Number(response.data.unitPrice || 0),
+          ingredients: Array.isArray(response.data.ingredients)
+            ? response.data.ingredients.map((ingredient) => ({
+                materialName: ingredient.materialName,
+                amountPerUnit: Number(ingredient.amountPerUnit || 0),
+              }))
+            : validIngredients,
+        }
+
+        setProducts((prevProducts) => {
+          const exists = prevProducts.some((product) => product.id === savedProduct.id)
+          if (exists) {
+            return prevProducts.map((product) =>
+              product.id === savedProduct.id ? savedProduct : product
+            )
+          }
+          return [...prevProducts, savedProduct]
+        })
+
+        return {
+          ok: true,
+          message:
+            response.message ||
+            `${savedProduct.productName} ${existingProduct ? 'recipe updated.' : 'recipe configured.'}`,
+        }
+      } catch {
+        return { ok: false, message: 'Could not save product in backend.' }
+      }
+    }
+
     if (existingProduct) {
-      if (isSupabaseConfigured) {
-        const { error: updateError } = await supabase
+      if (isBackendConfigured) {
+        const { error: updateError } = await backendClient
           .from('products')
           .update({ product_name: name, unit_currency: currency, unit_price: parsedUnitPrice })
           .eq('id', existingProduct.id)
@@ -982,7 +1342,7 @@ export const AppProvider = ({ children }) => {
           return { ok: false, message: 'Could not update product in backend.' }
         }
 
-        const { error: clearError } = await supabase
+        const { error: clearError } = await backendClient
           .from('product_ingredients')
           .delete()
           .eq('product_id', existingProduct.id)
@@ -991,7 +1351,7 @@ export const AppProvider = ({ children }) => {
           return { ok: false, message: 'Could not clear old recipe rows in backend.' }
         }
 
-        const { error: insertIngredientsError } = await supabase.from('product_ingredients').insert(
+        const { error: insertIngredientsError } = await backendClient.from('product_ingredients').insert(
           validIngredients.map((ingredient) => ({
             product_id: existingProduct.id,
             material_name: ingredient.materialName,
@@ -1020,8 +1380,8 @@ export const AppProvider = ({ children }) => {
       return { ok: true, message: `${name} recipe updated.` }
     }
 
-    if (isSupabaseConfigured) {
-      const { data: insertedProduct, error: insertProductError } = await supabase
+    if (isBackendConfigured) {
+      const { data: insertedProduct, error: insertProductError } = await backendClient
         .from('products')
         .insert([{ product_name: name, unit_currency: currency, unit_price: parsedUnitPrice }])
         .select('id, product_name, unit_currency, unit_price')
@@ -1031,7 +1391,7 @@ export const AppProvider = ({ children }) => {
         return { ok: false, message: 'Could not create product in backend.' }
       }
 
-      const { error: insertIngredientsError } = await supabase.from('product_ingredients').insert(
+      const { error: insertIngredientsError } = await backendClient.from('product_ingredients').insert(
         validIngredients.map((ingredient) => ({
           product_id: insertedProduct.id,
           material_name: ingredient.materialName,
@@ -1081,8 +1441,31 @@ export const AppProvider = ({ children }) => {
       return { ok: false, message: 'Product not found.' }
     }
 
-    if (isSupabaseConfigured) {
-      const { error: deleteFinishedGoodError } = await supabase
+    if (hasNodeApi) {
+      try {
+        const response = await apiRequest(`/api/products/${parsedProductId}`, {
+          method: 'DELETE',
+        })
+
+        if (!response.ok) {
+          return { ok: false, message: response.message || 'Could not delete product from backend.' }
+        }
+
+        setProducts((prevProducts) =>
+          prevProducts.filter((product) => product.id !== parsedProductId)
+        )
+        setFinishedGoods((prevGoods) =>
+          prevGoods.filter((good) => good.productId !== parsedProductId)
+        )
+
+        return { ok: true, message: response.message || `${productToDelete.productName} deleted.` }
+      } catch {
+        return { ok: false, message: 'Could not delete product from backend.' }
+      }
+    }
+
+    if (isBackendConfigured) {
+      const { error: deleteFinishedGoodError } = await backendClient
         .from('finished_goods')
         .delete()
         .eq('product_id', parsedProductId)
@@ -1091,7 +1474,7 @@ export const AppProvider = ({ children }) => {
         return { ok: false, message: 'Could not remove product stock summary.' }
       }
 
-      const { error: deleteProductError } = await supabase
+      const { error: deleteProductError } = await backendClient
         .from('products')
         .delete()
         .eq('id', parsedProductId)
@@ -1155,9 +1538,100 @@ export const AppProvider = ({ children }) => {
       })
     }
 
-    if (isSupabaseConfigured) {
+    if (hasNodeApi) {
+      try {
+        const response = await apiRequest('/api/production', {
+          method: 'POST',
+          body: JSON.stringify({
+            productId: parsedProductId,
+            quantity: parsedQuantity,
+            productionDate: selectedProductionDate,
+          }),
+        })
+
+        if (!response.ok || !response.data) {
+          return { ok: false, message: response.message || 'Could not save production in backend.' }
+        }
+
+        const log = response.data.log
+        const finishedGood = response.data.finishedGood
+
+        if (Array.isArray(response.data.updatedMaterials)) {
+          const byName = new Map(
+            response.data.updatedMaterials.map((item) => [item.materialName.toLowerCase(), item])
+          )
+
+          setMaterials((prevMaterials) =>
+            prevMaterials.map((material) => {
+              const summary = byName.get(material.name.toLowerCase())
+              if (!summary) {
+                return material
+              }
+
+              return {
+                ...material,
+                quantity: Number(summary.left || 0),
+              }
+            })
+          )
+        }
+
+        if (finishedGood) {
+          setFinishedGoods((prevGoods) => {
+            const exists = prevGoods.some((good) => good.productId === Number(finishedGood.productId))
+            if (exists) {
+              return prevGoods.map((good) =>
+                good.productId === Number(finishedGood.productId)
+                  ? { ...good, quantity: Number(finishedGood.quantity || 0) }
+                  : good
+              )
+            }
+
+            return [
+              ...prevGoods,
+              {
+                productId: Number(finishedGood.productId),
+                productName: finishedGood.productName,
+                quantity: Number(finishedGood.quantity || 0),
+              },
+            ]
+          })
+        }
+
+        if (log) {
+          setProductionLogs((prevLogs) => [
+            {
+              id: Number(log.id),
+              productId: log.product_id ? Number(log.product_id) : null,
+              productName: log.product_name,
+              quantity: Number(log.quantity || parsedQuantity),
+              materialSummary: Array.isArray(log.material_summary) ? log.material_summary : [],
+              createdAt: log.created_at || productionTimestamp,
+            },
+            ...prevLogs,
+          ])
+        }
+
+        return {
+          ok: true,
+          message:
+            response.message || `${parsedQuantity} ${selectedProduct.productName}(s) recorded successfully.`,
+          summary: {
+            productName: selectedProduct.productName,
+            producedQuantity: parsedQuantity,
+            materials: Array.isArray(response.data.updatedMaterials)
+              ? response.data.updatedMaterials
+              : productionMaterialSummary.map(({ materialId, ...rest }) => rest),
+          },
+        }
+      } catch {
+        return { ok: false, message: 'Could not save production in backend.' }
+      }
+    }
+
+    if (isBackendConfigured) {
       for (const summaryItem of productionMaterialSummary) {
-        const { error: updateMaterialError } = await supabase
+        const { error: updateMaterialError } = await backendClient
           .from('materials')
           .update({ quantity: summaryItem.left })
           .eq('id', summaryItem.materialId)
@@ -1172,7 +1646,7 @@ export const AppProvider = ({ children }) => {
         ((existingGood?.quantity || 0) + parsedQuantity).toFixed(2)
       )
 
-      const { error: upsertFinishedGoodError } = await supabase
+      const { error: upsertFinishedGoodError } = await backendClient
         .from('finished_goods')
         .upsert(
           [
@@ -1189,7 +1663,7 @@ export const AppProvider = ({ children }) => {
         return { ok: false, message: 'Could not update finished goods in backend.' }
       }
 
-      const { data: insertedLog, error: insertLogError } = await supabase
+      const { data: insertedLog, error: insertLogError } = await backendClient
         .from('production_logs')
         .insert([
           {
@@ -1340,8 +1814,52 @@ export const AppProvider = ({ children }) => {
     const updatedQuantityLeft = Number((availableQuantity - parsedQuantitySold).toFixed(2))
     const totalAmount = Number((parsedQuantitySold * parsedUnitPrice).toFixed(2))
 
-    if (isSupabaseConfigured) {
-      const { error: finishedGoodsError } = await supabase
+    if (hasNodeApi) {
+      try {
+        const saleResponse = await apiRequest('/api/sales', {
+          method: 'POST',
+          body: JSON.stringify({
+            productId: parsedProductId,
+            quantitySold: parsedQuantitySold,
+            saleDate: selectedSaleDate,
+            unitPrice: parsedUnitPrice,
+          }),
+        })
+
+        const insertedSale = saleResponse?.data
+        if (insertedSale) {
+          const mappedSale = mapSalesRecord(insertedSale)
+          setSalesLogs((prevSales) => [mappedSale, ...prevSales])
+
+          setFinishedGoods((prevGoods) =>
+            prevGoods.map((good) =>
+              good.productId === parsedProductId
+                ? {
+                    ...good,
+                    quantity: Number(insertedSale.quantity_left || 0),
+                  }
+                : good
+            )
+          )
+
+          return {
+            ok: true,
+            message: saleResponse?.message || `${parsedQuantitySold} unit(s) of ${selectedProduct.productName} sold successfully.`,
+            summary: {
+              productName: selectedProduct.productName,
+              quantitySold: parsedQuantitySold,
+              quantityLeft: Number(insertedSale.quantity_left || 0),
+              totalAmount: Number(insertedSale.total_amount || 0),
+            },
+          }
+        }
+      } catch (error) {
+        return { ok: false, message: error.message || 'Failed to record sale from Node API.' }
+      }
+    }
+
+    if (isBackendConfigured) {
+      const { error: finishedGoodsError } = await backendClient
         .from('finished_goods')
         .update({ quantity: updatedQuantityLeft })
         .eq('product_id', parsedProductId)
@@ -1350,7 +1868,7 @@ export const AppProvider = ({ children }) => {
         return { ok: false, message: 'Could not update finished goods quantity in backend.' }
       }
 
-      const { data: insertedSale, error: insertSaleError } = await supabase
+      const { data: insertedSale, error: insertSaleError } = await backendClient
         .from('sales')
         .insert([
           {
@@ -1426,7 +1944,7 @@ export const AppProvider = ({ children }) => {
   const totalSalesAmount = salesLogs.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0)
 
   const value = {
-    isSupabaseConfigured,
+    isBackendConfigured,
     isAuthenticated,
     isAuthLoading,
     currentUser,

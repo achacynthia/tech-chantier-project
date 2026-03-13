@@ -32,7 +32,6 @@ const Sales = () => {
   const [salesDownloadFormat, setSalesDownloadFormat] = useState('pdf')
   const [productFilter, setProductFilter] = useState('all')
   const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
   const [sortBy, setSortBy] = useState('quantity-desc')
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -62,13 +61,9 @@ const Sales = () => {
         return false
       }
 
-      if (toDate && saleDateValue > toDate) {
-        return false
-      }
-
       return true
     })
-  }, [salesLogs, productFilter, fromDate, toDate])
+  }, [salesLogs, productFilter, fromDate])
 
   const sortedSales = useMemo(() => {
     const salesCopy = [...filteredSales]
@@ -95,7 +90,6 @@ const Sales = () => {
   const clearFilters = () => {
     setProductFilter('all')
     setFromDate('')
-    setToDate('')
     setSortBy('quantity-desc')
     setCurrentPage(1)
   }
@@ -319,17 +313,7 @@ const Sales = () => {
               setFromDate(event.target.value)
               setCurrentPage(1)
             }}
-            aria-label="Filter start date"
-          />
-
-          <input
-            type="date"
-            value={toDate}
-            onChange={(event) => {
-              setToDate(event.target.value)
-              setCurrentPage(1)
-            }}
-            aria-label="Filter end date"
+            aria-label="Filter by date"
           />
 
           <select

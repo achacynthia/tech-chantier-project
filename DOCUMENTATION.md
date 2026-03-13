@@ -45,7 +45,7 @@ Production Tracker reduces these issues by giving visibility into stock and prod
 - Finished goods accumulation
 - Dashboard metrics and low-stock alerts
 - Reports for stock, finished goods, and production history
-- Supabase Auth (email/password) with route protection and persisted sessions
+- Local authentication with route protection and persisted sessions
 
 ## 7) Design Notes
 Implemented based on SRS guidance:
@@ -57,7 +57,8 @@ Implemented based on SRS guidance:
 - Frontend: React + Vite
 - Routing: React Router
 - Styling: CSS (with Tailwind available in project dependencies)
-- Backend/Database: Supabase (PostgreSQL + Supabase JS client)
+- Backend: Node.js + Express
+- Database: PostgreSQL
 - Deployment target: Vercel
 - Version control: GitHub
 
@@ -88,18 +89,21 @@ Implemented based on SRS guidance:
    ```bash
    npm install
    ```
-2. Configure Supabase environment:
+2. Configure frontend environment:
    ```bash
    cp .env.example .env
    ```
-   Then update `.env` with your Supabase values:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-3. In Supabase Dashboard, enable Email auth provider and set URL configuration.
-4. Initialize database schema:
-   - Open Supabase SQL Editor
-   - Run SQL in `supabase/schema.sql`
-5. Start development server:
+   Then update `.env` with:
+   - `VITE_API_BASE_URL`
+3. Initialize PostgreSQL schema:
+   - Run SQL in `postgres/schema.sql`
+4. Start Node backend:
+   ```bash
+   cd backend
+   npm install
+   npm run dev
+   ```
+5. Start frontend development server:
    ```bash
    npm run dev
    ```
