@@ -4,7 +4,7 @@ import { useAppContext } from '../context/AppContext'
 
 const Login = () => {
   const navigate = useNavigate()
-  const { login, signup } = useAppContext()
+  const { login, signup, notify } = useAppContext()
 
   const [isSignupMode, setIsSignupMode] = useState(false)
 
@@ -48,7 +48,7 @@ const Login = () => {
       return
     }
 
-    window.alert(result.message || 'Welcome back!')
+    notify('Success', result.message || 'Welcome back!')
     setErrorMessage('')
     navigate('/dashboard', { replace: true })
   }
@@ -62,7 +62,7 @@ const Login = () => {
       return
     }
 
-    window.alert(result.message || 'Account created successfully.')
+    notify('Success', result.message || 'Account created successfully.')
     setErrorMessage('')
     setIsSignupMode(false)
     setLoginData({

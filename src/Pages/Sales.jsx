@@ -11,6 +11,17 @@ const currencySymbols = {
   NGN: '₦',
 }
 
+const formatDate = (raw, fallback) => {
+  const candidate = raw || fallback || ''
+  if (!candidate) return ''
+  let d = new Date(candidate)
+  if (Number.isNaN(d.getTime())) {
+    d = new Date(`${candidate}T12:00:00`)
+  }
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString()
+}
+
 const sortOptions = [
   { value: 'quantity-desc', label: 'Highest Quantity Sold' },
   { value: 'quantity-asc', label: 'Lowest Quantity Sold' },
@@ -21,7 +32,7 @@ const sortOptions = [
 const pageSize = 10
 
 const Sales = () => {
-  const { products, finishedGoods, salesLogs, recordSale } = useAppContext()
+  const { products, finishedGoods, salesLogs, recordSale, notify } = useAppContext()
 
   const [salesForm, setSalesForm] = useState({
     productId: '',
@@ -117,8 +128,8 @@ const Sales = () => {
     event.preventDefault()
 
     const result = await recordSale(salesForm)
-    if (result.message) {
-      window.alert(result.message)
+    if (result?.message) {
+      result.ok ? notify('Success', result.message) : notify('Error', result.message)
     }
 
     if (result.ok) {
@@ -136,7 +147,7 @@ const Sales = () => {
     const rowsToDownload = paginatedSales
 
     if (rowsToDownload.length === 0) {
-      window.alert('No sales data available for current filters.')
+      notify('Notice', 'No sales data available for current filters.')
       return
     }
 
@@ -154,7 +165,7 @@ const Sales = () => {
       autoTable(pdf, {
         startY: 78,
         head: [['Product', 'Quantity Sold', 'Unit Price', 'Total Amount', 'Quantity Left', 'Sale Date']],
-        body: rowsToDownload.map((sale) => {
+          body: rowsToDownload.map((sale) => {
           const symbol = currencySymbols[sale.unitCurrency] || '$'
           return [
             sale.productName,
@@ -162,7 +173,7 @@ const Sales = () => {
             `${Number(sale.unitPrice).toFixed(2)} ${symbol}`,
             `${Number(sale.totalAmount).toFixed(2)} ${symbol}`,
             String(sale.quantityLeft),
-            new Date(`${sale.saleDate}T12:00:00`).toLocaleDateString(),
+              formatDate(sale.saleDate, sale.createdAt),
           ]
         }),
         theme: 'grid',
@@ -184,7 +195,7 @@ const Sales = () => {
         `${Number(sale.unitPrice).toFixed(2)} ${symbol}`,
         `${Number(sale.totalAmount).toFixed(2)} ${symbol}`,
         sale.quantityLeft,
-        sale.saleDate,
+        formatDate(sale.saleDate, sale.createdAt),
       ]
     })
 
@@ -369,7 +380,7 @@ const Sales = () => {
                         {Number(sale.totalAmount || 0).toFixed(2)} {symbol}
                       </td>
                       <td>{sale.quantityLeft}</td>
-                      <td>{new Date(`${sale.saleDate}T12:00:00`).toLocaleDateString()}</td>
+                      <td>{formatDate(sale.saleDate, sale.createdAt)}</td>
                     </tr>
                   )
                 })

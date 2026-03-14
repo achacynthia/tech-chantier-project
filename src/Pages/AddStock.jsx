@@ -23,7 +23,7 @@ const emptyMaterialForm = {
 }
 
 const AddStock = () => {
-  const { materials, products, addMaterial, updateMaterial, deleteMaterial, configureProduct, deleteProduct } = useAppContext()
+  const { materials, products, addMaterial, updateMaterial, deleteMaterial, configureProduct, deleteProduct, notify } = useAppContext()
 
   const [materialForm, setMaterialForm] = useState(emptyMaterialForm)
   const [editingMaterialId, setEditingMaterialId] = useState(null)
@@ -34,8 +34,12 @@ const AddStock = () => {
   const [recipeRows, setRecipeRows] = useState([{ materialName: '', amountPerUnit: '' }])
 
   const showResultAlert = (result) => {
-    if (result?.message) {
-      window.alert(result.message)
+    if (!result) return
+    const message = result.message || ''
+    if (result.ok) {
+      notify('Success', message)
+    } else {
+      notify('Error', message)
     }
   }
 
@@ -363,7 +367,12 @@ const AddStock = () => {
                       {getCurrencySymbol(material.costCurrency || 'USD')}
                     </td>
                     <td>{material.lowStockThreshold}</td>
-                    <td>{new Date(`${material.purchaseDate || getTodayDate()}T12:00:00`).toLocaleDateString()}</td>
+                    <td>{(() => {
+                      const raw = material.purchaseDate || getTodayDate()
+                      const parsed = new Date(raw)
+                      const dateObj = Number.isNaN(parsed.getTime()) ? new Date(`${raw}T12:00:00`) : parsed
+                      return dateObj.toLocaleDateString()
+                    })()}</td>
                     <td>
                       <div className="inline-actions compact-actions">
                         <button

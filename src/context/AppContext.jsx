@@ -213,10 +213,6 @@ export const AppProvider = ({ children }) => {
   const [productionLogs, setProductionLogs] = useState([])
   const [salesLogs, setSalesLogs] = useState([])
   const [stockPurchases, setStockPurchases] = useState(() => {
-    if (isBackendConfigured || hasNodeApi) {
-      return []
-    }
-
     try {
       const rawLogs = localStorage.getItem(LOCAL_STOCK_PURCHASES_KEY)
       const parsedLogs = rawLogs ? JSON.parse(rawLogs) : []
@@ -241,23 +237,24 @@ export const AppProvider = ({ children }) => {
       return []
     }
   })
-  const [sideNotice, setSideNotice] = useState('')
+  const [sideNotice, setSideNotice] = useState(null)
 
-  const notify = (message) => {
-    if (!message) {
-      return
-    }
+  const notify = (titleOrMessage, maybeMessage) => {
+    const title = maybeMessage ? String(titleOrMessage) : ''
+    const message = maybeMessage ? String(maybeMessage) : String(titleOrMessage || '')
 
-    setSideNotice(message)
+    if (!message) return
+
+    setSideNotice({ title, message })
 
     if (noticeTimerRef.current) {
       clearTimeout(noticeTimerRef.current)
     }
 
     noticeTimerRef.current = setTimeout(() => {
-      setSideNotice('')
+      setSideNotice(null)
       noticeTimerRef.current = null
-    }, 3200)
+    }, 4000)
   }
 
   useEffect(() => {
@@ -289,14 +286,10 @@ export const AppProvider = ({ children }) => {
   }, [isAuthenticated, currentUser])
 
   useEffect(() => {
-    if (isBackendConfigured) {
-      return
-    }
-
     try {
       localStorage.setItem(LOCAL_STOCK_PURCHASES_KEY, JSON.stringify(stockPurchases))
     } catch {
-      // Ignore storage write failures in local-only mode
+      // Ignore storage write failures
     }
   }, [stockPurchases])
 
@@ -535,7 +528,30 @@ export const AppProvider = ({ children }) => {
         )
 
         setSalesLogs(salesData.map(mapSalesRecord))
-        setStockPurchases([])
+
+        // Preserve any local stock purchase logs. If none exist, seed from
+        // backend materials so Reports show purchased quantities for existing data.
+        try {
+          const rawLocal = localStorage.getItem(LOCAL_STOCK_PURCHASES_KEY)
+          const existingLocal = rawLocal ? JSON.parse(rawLocal) : []
+          if (!Array.isArray(existingLocal) || existingLocal.length === 0) {
+            const seeded = materialsData.map((m, i) => ({
+              id: Date.now() + i,
+              materialId: Number(m.id),
+              materialName: m.name,
+              quantityPurchased: Number(m.quantity || 0),
+              unit: m.unit,
+              purchaseDate: m.purchase_date || DEFAULT_PURCHASE_DATE,
+              createdAt: new Date(`${m.purchase_date || DEFAULT_PURCHASE_DATE}T12:00:00`).toISOString(),
+            }))
+            if (seeded.length > 0) {
+              setStockPurchases(seeded)
+              try {
+                localStorage.setItem(LOCAL_STOCK_PURCHASES_KEY, JSON.stringify(seeded))
+              } catch {}
+            }
+          }
+        } catch {}
 
         setProductionLogs(
           logsData.map((log) => ({
@@ -1938,6 +1954,28 @@ export const AppProvider = ({ children }) => {
   const totalFinishedGoods = finishedGoods.reduce((sum, item) => sum + item.quantity, 0)
   const totalProductionRuns = productionLogs.length
   const totalSalesAmount = salesLogs.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0)
+
+  // Show a persistent guest-mode side notice when the user is not signed in.
+  useEffect(() => {
+    if (isBootstrapping) return
+
+    if (!isAuthenticated) {
+      // Only set the guest notice if nothing else is shown or if the current notice is not the guest notice
+      if (!sideNotice || sideNotice?.isGuest !== true) {
+        setSideNotice({
+          title: 'Guest Mode',
+          message: 'You are browsing in Guest mode — login or signup to save your data.',
+          isGuest: true,
+        })
+      }
+      return
+    }
+
+    // Clear guest notice when user signs in
+    if (sideNotice?.isGuest) {
+      setSideNotice(null)
+    }
+  }, [isAuthenticated, isBootstrapping, sideNotice])
 
   const value = {
     isBackendConfigured,
